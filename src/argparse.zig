@@ -146,7 +146,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             } });
         };
 
-        pub fn parseArgumentStrings(allocator: *Allocator, arguments: [][*:0]u8) (ParserError || WriteError || error{OutOfMemory})!ParserResult {
+        pub fn parseArgumentStrings(allocator: *Allocator, arguments: [][*:0]u8) !ParserResult {
             // Standard output writer
             const stdout = io.getStdOut().writer();
 
@@ -273,7 +273,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             return parsed_args;
         }
 
-        pub fn parse(allocator: *Allocator) (ParserError || WriteError || error{OutOfMemory})!ParserResult {
+        pub fn parse(allocator: *Allocator) !ParserResult {
             const arguments = std.os.argv;
             return try parseArgumentStrings(allocator, arguments);
         }

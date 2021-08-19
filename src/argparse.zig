@@ -53,7 +53,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             NoArgument,
         };
 
-        pub fn displayVersionWriter(file: std.fs.File) WriteError!void {
+        pub fn displayVersionWriter(file: File) WriteError!void {
             // Get writer
             const w = file.writer();
 

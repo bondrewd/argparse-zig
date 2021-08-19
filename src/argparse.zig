@@ -1,9 +1,16 @@
+// Libraries
 const std = @import("std");
+const ansi = @import("ansi-zig/src/ansi.zig");
+
+// Modules
 const io = std.io;
 const fmt = std.fmt;
 const eql = std.mem.eql;
 const len = std.mem.len;
-const ansi = @import("ansi-zig/src/ansi.zig");
+const testing = std.testing;
+
+// Types
+const File = std.fs.File;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const WriteError = std.os.WriteError;
@@ -11,6 +18,7 @@ const TypeInfo = std.builtin.TypeInfo;
 const StructField = TypeInfo.StructField;
 const Declaration = TypeInfo.Declaration;
 
+// Ansi format
 const reset = ansi.reset;
 const bold = ansi.bold;
 const red = ansi.fg_red_light;
@@ -45,31 +53,45 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             NoArgument,
         };
 
-        pub fn displayVersion() WriteError!void {
-            // Standard output writer
-            const stdout = io.getStdOut().writer();
+        pub fn displayVersionWriter(file: std.fs.File) WriteError!void {
+            // Get writer
+            const w = file.writer();
 
             // Binary version
             const name = config.bin_name;
             const major = config.bin_version.major;
             const minor = config.bin_version.minor;
             const patch = config.bin_version.patch;
-            try stdout.print(bold ++ green ++ "{s}" ++ bold ++ blue ++ " {d}.{d}.{d}\n" ++ reset, .{ name, major, minor, patch });
+            try w.print(bold ++ green ++ "{s}" ++ bold ++ blue ++ " {d}.{d}.{d}\n" ++ reset, .{ name, major, minor, patch });
         }
-        pub fn displayUsage() WriteError!void {
+
+        pub fn displayVersion() WriteError!void {
+            const stdout = io.getStdOut();
+            try displayVersionWriter(stdout);
+        }
+
+        pub fn displayInfo() WriteError!void {
+            // Standard output writer
             const stdout = io.getStdOut().writer();
 
-            // binary version
-            try displayVersion();
+            // Binary info
+            try stdout.writeAll(config.bin_info ++ "\n");
+        }
 
-            // binary info
-            try stdout.writeAll("\n" ++ config.bin_info ++ "\n\n");
+        pub fn displayUsage() WriteError!void {
+            // Standard output writer
+            const stdout = io.getStdOut().writer();
 
-            // bin usage
+            // Bin usage
             try stdout.writeAll(bold ++ yellow ++ "USAGE\n" ++ reset);
-            try stdout.writeAll("    " ++ config.bin_usage ++ "\n\n");
+            try stdout.writeAll("    " ++ config.bin_usage ++ "\n");
+        }
 
-            // bin options
+        pub fn displayOptions() WriteError!void {
+            // Standard output writer
+            const stdout = io.getStdOut().writer();
+
+            // Bin options
             try stdout.writeAll(bold ++ yellow ++ "OPTIONS\n" ++ reset);
             inline for (options) |option| {
                 const long = option.long orelse "";
@@ -115,7 +137,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             } });
         };
 
-        pub fn parse(allocator: *Allocator) (ParserError || WriteError || error{OutOfMemory})!ParserResult {
+        pub fn parseArgumentStrings(allocator: *Allocator, arguments: [][*:0]u8) (ParserError || WriteError || error{OutOfMemory})!ParserResult {
             // Standard output writer
             const stdout = io.getStdOut().writer();
 
@@ -132,12 +154,14 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             // Initialize argument parser flags
             var parsing_done = [_]bool{false} ** options.len;
 
-            // Get arguments
-            var arguments = std.os.argv;
+            // Check arguments
             if (arguments.len == 1 and options.len > 0) {
                 if (comptime config.display_error) {
                     const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                    try stdout.writeAll(error_fmt ++ " Executed without arguments\n");
+                    try stdout.writeAll(error_fmt ++ " Executed without arguments\n\n");
+                    try displayUsage();
+                    try stdout.writeAll("\n");
+                    try displayOptions();
                 }
 
                 return error.NoArgument;
@@ -240,7 +264,12 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             return parsed_args;
         }
 
-        pub fn deinit(args: ParserResult) void {
+        pub fn parse(allocator: *Allocator) (ParserError || WriteError || error{OutOfMemory})!ParserResult {
+            const arguments = std.os.argv;
+            return try parseArgumentStrings(allocator, arguments);
+        }
+
+        pub fn deinitArgs(args: ParserResult) void {
             inline for (options) |option| {
                 switch (option.takes) {
                     .Many => @field(args, option.name).deinit(),
@@ -249,4 +278,8 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             }
         }
     };
+}
+
+test "Argparse displayVersionWriter" {
+    std.log.info("foo todo", .{});
 }

@@ -13,18 +13,17 @@ const testing = std.testing;
 const File = std.fs.File;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
-const WriteError = std.os.WriteError;
 const TypeInfo = std.builtin.TypeInfo;
 const StructField = TypeInfo.StructField;
 const Declaration = TypeInfo.Declaration;
 
 // Ansi format
 const reset = ansi.reset;
-const bold = ansi.bold;
-const red = ansi.fg_red_light;
-const blue = ansi.fg_blue_light;
-const green = ansi.fg_green_light;
-const yellow = ansi.fg_yellow_light;
+const bold = ansi.bold_on;
+const red = ansi.fg_light_red;
+const blue = ansi.fg_light_blue;
+const green = ansi.fg_light_green;
+const yellow = ansi.fg_light_yellow;
 
 pub const ParserConfig = struct {
     bin_name: []const u8,
@@ -53,38 +52,48 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             NoArgument,
         };
 
-        pub fn displayVersionWriter(file: File) WriteError!void {
-            // Get writer
-            const w = file.writer();
-
+        pub fn displayVersionWriter(writer: anytype) !void {
             // Binary version
             const name = config.bin_name;
             const major = config.bin_version.major;
             const minor = config.bin_version.minor;
             const patch = config.bin_version.patch;
-            try w.print(bold ++ green ++ "{s}" ++ bold ++ blue ++ " {d}.{d}.{d}\n" ++ reset, .{ name, major, minor, patch });
+            try writer.print(bold ++ green ++ "{s}" ++ bold ++ blue ++ " {d}.{d}.{d}\n" ++ reset, .{ name, major, minor, patch });
         }
 
-        pub fn displayVersion() WriteError!void {
-            const stdout = io.getStdOut();
-            try displayVersionWriter(stdout);
+        pub fn displayVersion() !void {
+            // Standard output writer
+            const stdout = io.getStdOut().writer();
+
+            // Binary version
+            try printVersionWriter(stdout);
         }
 
-        pub fn displayInfo() WriteError!void {
+        pub fn displayInfoWriter(writer: anytype) !void {
+            // Binary info
+            try writer.writeAll(config.bin_info ++ "\n");
+        }
+
+        pub fn displayInfo() !void {
             // Standard output writer
             const stdout = io.getStdOut().writer();
 
             // Binary info
-            try stdout.writeAll(config.bin_info ++ "\n");
+            try displayInfoWriter(stdout);
         }
 
-        pub fn displayUsage() WriteError!void {
+        pub fn displayUsageWriter(writer: anytype) !void {
+            // Bin usage
+            try writer.writeAll(bold ++ yellow ++ "USAGE\n" ++ reset);
+            try writer.writeAll("    " ++ config.bin_usage ++ "\n");
+        }
+
+        pub fn displayUsage() !void {
             // Standard output writer
             const stdout = io.getStdOut().writer();
 
             // Bin usage
-            try stdout.writeAll(bold ++ yellow ++ "USAGE\n" ++ reset);
-            try stdout.writeAll("    " ++ config.bin_usage ++ "\n");
+            try displayUsageWriter(stdout);
         }
 
         pub fn displayOptions() WriteError!void {
@@ -281,5 +290,61 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
 }
 
 test "Argparse displayVersionWriter" {
-    std.log.info("foo todo", .{});
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "Foo",
+        .bin_info = "",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &.{});
+
+    try Parser.displayVersionWriter(w);
+    const str = bold ++ green ++ "Foo" ++ bold ++ blue ++ " 1.2.3\n" ++ reset;
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayInfoWriter" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "Foo",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &.{});
+
+    try Parser.displayInfoWriter(w);
+    const str = "Foo\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayUsageWriter" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "",
+        .bin_usage = "Foo",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &.{});
+
+    try Parser.displayUsageWriter(w);
+    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    Foo" ++ "\n";
+    try testing.expectEqualStrings(list.items, str);
 }

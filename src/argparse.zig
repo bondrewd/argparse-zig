@@ -31,6 +31,8 @@ pub const ParserConfig = struct {
     bin_usage: []const u8,
     bin_version: struct { major: u8, minor: u8, patch: u8 },
     display_error: bool = false,
+    default_version: bool = true,
+    default_help: bool = true,
 };
 
 pub const ArgumentParserOption = struct {
@@ -113,6 +115,16 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                 try writer.writeAll(bold ++ green ++ "    " ++ short ++ separator ++ long ++ " " ++ metavar ++ reset);
                 try writer.writeAll("\n\t" ++ option.description ++ "\n\n");
             }
+
+            if (config.default_version) {
+                try writer.writeAll(bold ++ green ++ "    -v, --version" ++ reset);
+                try writer.writeAll("\n\tPrint version and exit\n\n");
+            }
+
+            if (config.default_help) {
+                try writer.writeAll(bold ++ green ++ "    -h, --help" ++ reset);
+                try writer.writeAll("\n\tDisplay this and exit\n\n");
+            }
         }
 
         pub fn displayOptions() !void {
@@ -186,6 +198,20 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
 
                 // Iterate over all the options
                 inline for (options) |option, id| {
+                    if (config.default_version) {
+                        if (eql(u8, arg, "-v") or eql(u8, arg, "--version")) {
+                            try displayVersion();
+                            std.os.exit(0);
+                        }
+                    }
+
+                    if (config.default_help) {
+                        if (eql(u8, arg, "-h") or eql(u8, arg, "--help")) {
+                            try displayOptions();
+                            std.os.exit(0);
+                        }
+                    }
+
                     if (eql(u8, arg, option.short orelse "") or eql(u8, arg, option.long orelse "")) {
                         if (parsing_done[id]) {
                             if (comptime config.display_error) {
@@ -357,7 +383,63 @@ test "Argparse displayUsageWriter" {
     try testing.expectEqualStrings(list.items, str);
 }
 
-test "Argparse displayOptionsWriter" {
+test "Argparse displayOptionsWriter 1" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, .{});
+
+    try Parser.displayOptionsWriter(w);
+    const line1 = bold ++ yellow ++ "OPTIONS\n" ++ reset;
+    const line2 = bold ++ green ++ "    -v, --version" ++ reset;
+    const line3 = "\n\tPrint version and exit\n\n";
+    const line4 = bold ++ green ++ "    -h, --help" ++ reset;
+    const line5 = "\n\tDisplay this and exit\n\n";
+    const str = line1 ++ line2 ++ line3 ++ line4 ++ line5;
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionsWriter 2" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+        .default_version = false,
+        .default_help = false,
+    }, [_]ArgumentParserOption{
+        .{
+            .name = "foo",
+            .short = "-f",
+            .description = "bar",
+        },
+    });
+
+    try Parser.displayOptionsWriter(w);
+    const line1 = bold ++ yellow ++ "OPTIONS\n" ++ reset;
+    const line2 = bold ++ green ++ "    -f" ++ " " ++ reset;
+    const line3 = "\n\t" ++ "bar" ++ "\n\n";
+    const str = line1 ++ line2 ++ line3;
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionsWriter 3" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
@@ -382,6 +464,10 @@ test "Argparse displayOptionsWriter" {
     const line1 = bold ++ yellow ++ "OPTIONS\n" ++ reset;
     const line2 = bold ++ green ++ "    -f" ++ " " ++ reset;
     const line3 = "\n\t" ++ "bar" ++ "\n\n";
-    const str = line1 ++ line2 ++ line3;
+    const line4 = bold ++ green ++ "    -v, --version" ++ reset;
+    const line5 = "\n\tPrint version and exit\n\n";
+    const line6 = bold ++ green ++ "    -h, --help" ++ reset;
+    const line7 = "\n\tDisplay this and exit\n\n";
+    const str = line1 ++ line2 ++ line3 ++ line4 ++ line5 ++ line6 ++ line7;
     try testing.expectEqualStrings(list.items, str);
 }

@@ -53,7 +53,6 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
         pub const ParserError = error{
             OptionAppearsTwoTimes,
             MissingArgument,
-            MissingOption,
             UnknownArgument,
             NoArgument,
         };
@@ -183,15 +182,19 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
 
             // Check arguments
             if (arguments.len == 1 and options.len > 0) {
-                if (comptime config.display_error) {
-                    const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                    try writer.writeAll(error_fmt ++ " Executed without arguments\n\n");
-                    try displayUsageWriter(writer);
-                    try writer.writeAll("\n");
-                    try displayOptionsWriter(writer);
-                }
+                inline for (options) |option| {
+                    if (option.required) {
+                        if (comptime config.display_error) {
+                            const error_fmt = bold ++ red ++ "Error:" ++ reset;
+                            try writer.writeAll(error_fmt ++ " Executed without arguments\n\n");
+                            try displayUsageWriter(writer);
+                            try writer.writeAll("\n");
+                            try displayOptionsWriter(writer);
+                        }
 
-                return error.NoArgument;
+                        return error.NoArgument;
+                    }
+                }
             }
 
             // Parse arguments
@@ -303,10 +306,10 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                             const long_fmt = bold ++ green ++ long ++ reset;
                             const short_fmt = bold ++ green ++ short ++ reset;
                             const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                            try writer.writeAll(error_fmt ++ " Missing required option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+                            try writer.writeAll(error_fmt ++ " Missing argument " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
                         }
 
-                        return error.MissingOption;
+                        return error.MissingArgument;
                     }
                 }
 
@@ -541,6 +544,37 @@ test "Argparse parseArgumentsWriter 2" {
             .name = "foo",
             .short = "-f",
             .description = "",
+        },
+    });
+
+    const arguments = [_][*:0]const u8{"test"};
+
+    const parsed_args = try Parser.parseArgumentsWriter(testing.allocator, &arguments, w);
+    defer Parser.deinitArgs(parsed_args);
+
+    try testing.expectEqual(bool, @TypeOf(parsed_args.foo));
+    try testing.expectEqual(false, parsed_args.foo);
+}
+
+test "Argparse parseArgumentsWriter 3" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, [_]ArgumentParserOption{
+        .{
+            .name = "foo",
+            .short = "-f",
+            .description = "",
+            .required = true,
         },
     });
 

@@ -186,7 +186,13 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
             inline for (options) |option| {
                 @field(parsed_args, option.name) = switch (option.takes) {
                     .None => false,
-                    .One => null,
+                    .One => blk: {
+                        if (option.required) {
+                            break :blk "";
+                        } else {
+                            break :blk null;
+                        }
+                    },
                     .Many => ArrayList(option.argument_type).init(allocator),
                 };
             }

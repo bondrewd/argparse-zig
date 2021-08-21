@@ -43,6 +43,7 @@ pub const ArgumentParserOption = struct {
     description: []const u8,
     argument_type: type = bool,
     takes: enum { None, One, Many } = .None,
+    required: bool = false,
 };
 
 pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) type {
@@ -52,6 +53,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
         pub const ParserError = error{
             OptionAppearsTwoTimes,
             MissingArgument,
+            MissingOption,
             UnknownArgument,
             NoArgument,
         };
@@ -288,6 +290,23 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                         }
                         parsing_done[id] = true;
                         continue :argument_loop;
+                    }
+                }
+
+                inline for (options) |option, id| {
+                    if (!parsing_done[id] and option.required) {
+                        if (comptime config.display_error) {
+                            const long = option.long orelse "";
+                            const short = option.short orelse "";
+                            const separator = if (option.short != null) (if (option.long != null) ", " else "") else "";
+
+                            const long_fmt = bold ++ green ++ long ++ reset;
+                            const short_fmt = bold ++ green ++ short ++ reset;
+                            const error_fmt = bold ++ red ++ "Error:" ++ reset;
+                            try writer.writeAll(error_fmt ++ " Missing required option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+                        }
+
+                        return error.MissingOption;
                     }
                 }
 

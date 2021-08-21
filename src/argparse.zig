@@ -186,13 +186,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
             inline for (options) |option| {
                 @field(parsed_args, option.name) = switch (option.takes) {
                     .None => false,
-                    .One => blk: {
-                        if (option.required) {
-                            break :blk "";
-                        } else {
-                            break :blk null;
-                        }
-                    },
+                    .One => if (option.required) undefined else null,
                     .Many => ArrayList(option.argument_type).init(allocator),
                 };
             }
@@ -207,9 +201,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                         if (comptime config.display_error) {
                             const error_fmt = bold ++ red ++ "Error:" ++ reset;
                             try writer.writeAll(error_fmt ++ " Executed without arguments\n\n");
-                            try displayUsageWriter(writer);
-                            try writer.writeAll("\n");
-                            try displayOptionsWriter(writer);
+
+                            if (config.default_help) try writer.writeAll("Try " ++ bold ++ green ++ "-h" ++ reset ++ " or " ++ bold ++ green ++ "--help" ++ reset ++ " for more information\n\n");
+                            std.os.exit(0);
                         }
 
                         return error.NoArgument;
@@ -256,6 +250,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                                 const short_fmt = bold ++ green ++ short ++ reset;
                                 const error_fmt = bold ++ red ++ "Error:" ++ reset;
                                 try writer.writeAll(error_fmt ++ " Option " ++ short_fmt ++ separator ++ long_fmt ++ " appears more than one time\n");
+
+                                if (config.default_help) try writer.writeAll("Try " ++ bold ++ green ++ "-h" ++ reset ++ " or " ++ bold ++ green ++ "--help" ++ reset ++ " for more information\n\n");
+                                std.os.exit(0);
                             }
 
                             return error.OptionAppearsTwoTimes;
@@ -273,6 +270,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                                         const short_fmt = bold ++ green ++ short ++ reset;
                                         const error_fmt = bold ++ red ++ "Error:" ++ reset;
                                         try writer.writeAll(error_fmt ++ " Missing argument for option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+
+                                        if (config.default_help) try writer.writeAll("Try " ++ bold ++ green ++ "-h" ++ reset ++ " or " ++ bold ++ green ++ "--help" ++ reset ++ " for more information\n\n");
+                                        std.os.exit(0);
                                     }
 
                                     return error.MissingArgument;
@@ -297,6 +297,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                                         const short_fmt = bold ++ green ++ short ++ reset;
                                         const error_fmt = bold ++ red ++ "Error:" ++ reset;
                                         try writer.writeAll(error_fmt ++ " Missing argument for option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+
+                                        if (config.default_help) try writer.writeAll("Try " ++ bold ++ green ++ "-h" ++ reset ++ " or " ++ bold ++ green ++ "--help" ++ reset ++ " for more information\n\n");
+                                        std.os.exit(0);
                                     }
 
                                     return error.MissingArgument;
@@ -326,6 +329,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                     const arg_fmt = bold ++ green ++ "{s}" ++ reset;
                     const error_fmt = bold ++ red ++ "Error:" ++ reset;
                     try writer.print(error_fmt ++ " Unknown argument " ++ arg_fmt ++ "\n", .{arg});
+
+                    if (config.default_help) try writer.writeAll("Try " ++ bold ++ green ++ "-h" ++ reset ++ " or " ++ bold ++ green ++ "--help" ++ reset ++ " for more information\n\n");
+                    std.os.exit(0);
                 }
 
                 return error.UnknownArgument;
@@ -343,6 +349,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                         const short_fmt = bold ++ green ++ short ++ reset;
                         const error_fmt = bold ++ red ++ "Error:" ++ reset;
                         try writer.writeAll(error_fmt ++ " Missing required argument " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+
+                        if (config.default_help) try writer.writeAll("Try " ++ bold ++ green ++ "-h" ++ reset ++ " or " ++ bold ++ green ++ "--help" ++ reset ++ " for more information\n\n");
+                        std.os.exit(0);
                     }
 
                     return error.MissingArgument;

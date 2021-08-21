@@ -47,6 +47,8 @@ pub const ArgumentParserOption = struct {
 
 pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) type {
     return struct {
+        const Self = @This();
+
         pub const ParserError = error{
             OptionAppearsTwoTimes,
             MissingArgument,
@@ -163,7 +165,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
             } });
         };
 
-        pub fn parseArgumentsWriter(allocator: *Allocator, arguments: [][*:0]u8, comptime writer: anytype) !ParserResult {
+        pub fn parseArgumentsWriter(allocator: *Allocator, arguments: []const [*:0]const u8, writer: anytype) !ParserResult {
             // Initialize parser result
             var parsed_args: ParserResult = undefined;
             inline for (options) |option| {
@@ -200,14 +202,14 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                 inline for (options) |option, id| {
                     if (config.default_version) {
                         if (eql(u8, arg, "-v") or eql(u8, arg, "--version")) {
-                            try displayVersion();
+                            try displayVersionWriter(writer);
                             std.os.exit(0);
                         }
                     }
 
                     if (config.default_help) {
                         if (eql(u8, arg, "-h") or eql(u8, arg, "--help")) {
-                            try displayOptions();
+                            try displayOptionsWriter(writer);
                             std.os.exit(0);
                         }
                     }
@@ -470,4 +472,60 @@ test "Argparse displayOptionsWriter 3" {
     const line7 = "\n\tDisplay this and exit\n\n";
     const str = line1 ++ line2 ++ line3 ++ line4 ++ line5 ++ line6 ++ line7;
     try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse parseArgumentsWriter 1" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, [_]ArgumentParserOption{
+        .{
+            .name = "foo",
+            .short = "-f",
+            .description = "",
+        },
+    });
+
+    const arguments = [_][*:0]const u8{ "test", "-f" };
+
+    const parsed_args = try Parser.parseArgumentsWriter(testing.allocator, &arguments, w);
+    defer Parser.deinitArgs(parsed_args);
+
+    try testing.expectEqual(bool, @TypeOf(parsed_args.foo));
+    try testing.expectEqual(true, parsed_args.foo);
+}
+
+test "Argparse parseArgumentsWriter 2" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, [_]ArgumentParserOption{
+        .{
+            .name = "foo",
+            .short = "-f",
+            .description = "",
+        },
+    });
+
+    const arguments = [_][*:0]const u8{"test"};
+
+    try testing.expectError(Parser.ParserError.NoArgument, Parser.parseArgumentsWriter(testing.allocator, &arguments, w));
 }

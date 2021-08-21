@@ -214,6 +214,12 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
 
                     if (config.default_help) {
                         if (eql(u8, arg, "-h") or eql(u8, arg, "--help")) {
+                            try displayVersionWriter(writer);
+                            try writer.writeAll("\n");
+                            try displayInfoWriter(writer);
+                            try writer.writeAll("\n");
+                            try displayUsageWriter(writer);
+                            try writer.writeAll("\n");
                             try displayOptionsWriter(writer);
                             std.os.exit(0);
                         }

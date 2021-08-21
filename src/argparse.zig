@@ -327,7 +327,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
 
         pub fn parse(allocator: *Allocator) !ParserResult {
             // Get arguments
-            const arguments = std.os.argv;
+            const arguments: [][*:0]const u8 = std.os.argv;
 
             // Standard output writer
             const stdout = io.getStdOut().writer();

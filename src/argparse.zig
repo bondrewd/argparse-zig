@@ -70,7 +70,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
             const stdout = io.getStdOut().writer();
 
             // Binary version
-            try printVersionWriter(stdout);
+            try displayVersionWriter(stdout);
         }
 
         pub fn displayInfoWriter(writer: anytype) !void {
@@ -184,9 +184,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                 if (comptime config.display_error) {
                     const error_fmt = bold ++ red ++ "Error:" ++ reset;
                     try writer.writeAll(error_fmt ++ " Executed without arguments\n\n");
-                    try displayUsage();
+                    try displayUsageWriter(writer);
                     try writer.writeAll("\n");
-                    try displayOptions();
+                    try displayOptionsWriter(writer);
                 }
 
                 return error.NoArgument;

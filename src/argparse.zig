@@ -306,7 +306,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                             const long_fmt = bold ++ green ++ long ++ reset;
                             const short_fmt = bold ++ green ++ short ++ reset;
                             const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                            try writer.writeAll(error_fmt ++ " Missing argument " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+                            try writer.writeAll(error_fmt ++ " Missing required argument " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
                         }
 
                         return error.MissingArgument;

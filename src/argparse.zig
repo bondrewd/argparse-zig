@@ -43,7 +43,7 @@ pub const ArgumentParserOption = struct {
     takes: enum { None, One, Many } = .None,
 };
 
-pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const ArgumentParserOption) type {
+pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) type {
     return struct {
         pub const ParserError = error{
             OptionAppearsTwoTimes,
@@ -96,12 +96,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             try displayUsageWriter(stdout);
         }
 
-        pub fn displayOptions() WriteError!void {
-            // Standard output writer
-            const stdout = io.getStdOut().writer();
-
+        pub fn displayOptionsWriter(writer: anytype) !void {
             // Bin options
-            try stdout.writeAll(bold ++ yellow ++ "OPTIONS\n" ++ reset);
+            try writer.writeAll(bold ++ yellow ++ "OPTIONS\n" ++ reset);
             inline for (options) |option| {
                 const long = option.long orelse "";
                 const short = option.short orelse "  ";
@@ -113,12 +110,20 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
                 const separator = if (option.short != null) (if (option.long != null) ", " else "") else "  ";
                 if (option.short == null and option.long == null) @compileError("Option must have defined at least short or long");
 
-                try stdout.writeAll(bold ++ green ++ "    " ++ short ++ separator ++ long ++ " " ++ metavar ++ reset);
-                try stdout.writeAll("\n\t" ++ option.description ++ "\n\n");
+                try writer.writeAll(bold ++ green ++ "    " ++ short ++ separator ++ long ++ " " ++ metavar ++ reset);
+                try writer.writeAll("\n\t" ++ option.description ++ "\n\n");
             }
         }
 
-        const ParserResult = blk: {
+        pub fn displayOptions() !void {
+            // Standard output writer
+            const stdout = io.getStdOut().writer();
+
+            // Bin options
+            try displayOptionsWriter(stdout);
+        }
+
+        pub const ParserResult = blk: {
             // Struct fields
             var fields: [options.len]StructField = undefined;
             inline for (options) |option, i| {
@@ -146,10 +151,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             } });
         };
 
-        pub fn parseArgumentStrings(allocator: *Allocator, arguments: [][*:0]u8) !ParserResult {
-            // Standard output writer
-            const stdout = io.getStdOut().writer();
-
+        pub fn parseArgumentsWriter(allocator: *Allocator, arguments: [][*:0]u8, comptime writer: anytype) !ParserResult {
             // Initialize parser result
             var parsed_args: ParserResult = undefined;
             inline for (options) |option| {
@@ -167,9 +169,9 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
             if (arguments.len == 1 and options.len > 0) {
                 if (comptime config.display_error) {
                     const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                    try stdout.writeAll(error_fmt ++ " Executed without arguments\n\n");
+                    try writer.writeAll(error_fmt ++ " Executed without arguments\n\n");
                     try displayUsage();
-                    try stdout.writeAll("\n");
+                    try writer.writeAll("\n");
                     try displayOptions();
                 }
 
@@ -194,7 +196,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
                                 const long_fmt = bold ++ green ++ long ++ reset;
                                 const short_fmt = bold ++ green ++ short ++ reset;
                                 const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                                try stdout.writeAll(error_fmt ++ " Option " ++ short_fmt ++ separator ++ long_fmt ++ " appears more than one time\n");
+                                try writer.writeAll(error_fmt ++ " Option " ++ short_fmt ++ separator ++ long_fmt ++ " appears more than one time\n");
                             }
 
                             return error.OptionAppearsTwoTimes;
@@ -211,7 +213,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
                                         const long_fmt = bold ++ green ++ long ++ reset;
                                         const short_fmt = bold ++ green ++ short ++ reset;
                                         const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                                        try stdout.writeAll(error_fmt ++ " Missing argument for option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+                                        try writer.writeAll(error_fmt ++ " Missing argument for option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
                                     }
 
                                     return error.MissingArgument;
@@ -235,7 +237,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
                                         const long_fmt = bold ++ green ++ long ++ reset;
                                         const short_fmt = bold ++ green ++ short ++ reset;
                                         const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                                        try stdout.writeAll(error_fmt ++ " Missing argument for option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
+                                        try writer.writeAll(error_fmt ++ " Missing argument for option " ++ short_fmt ++ separator ++ long_fmt ++ "\n");
                                     }
 
                                     return error.MissingArgument;
@@ -264,7 +266,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
                 if (comptime config.display_error) {
                     const arg_fmt = bold ++ green ++ "{s}" ++ reset;
                     const error_fmt = bold ++ red ++ "Error:" ++ reset;
-                    try stdout.print(error_fmt ++ " Unknown argument " ++ arg_fmt ++ "\n", .{arg});
+                    try writer.print(error_fmt ++ " Unknown argument " ++ arg_fmt ++ "\n", .{arg});
                 }
 
                 return error.UnknownArgument;
@@ -274,8 +276,14 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: []const A
         }
 
         pub fn parse(allocator: *Allocator) !ParserResult {
+            // Get arguments
             const arguments = std.os.argv;
-            return try parseArgumentStrings(allocator, arguments);
+
+            // Standard output writer
+            const stdout = io.getStdOut().writer();
+
+            // Parse arguments
+            return try parseArgumentsWriter(allocator, arguments, stdout);
         }
 
         pub fn deinitArgs(args: ParserResult) void {
@@ -302,7 +310,7 @@ test "Argparse displayVersionWriter" {
         .bin_info = "",
         .bin_usage = "",
         .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &.{});
+    }, .{});
 
     try Parser.displayVersionWriter(w);
     const str = bold ++ green ++ "Foo" ++ bold ++ blue ++ " 1.2.3\n" ++ reset;
@@ -322,7 +330,7 @@ test "Argparse displayInfoWriter" {
         .bin_info = "Foo",
         .bin_usage = "",
         .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &.{});
+    }, .{});
 
     try Parser.displayInfoWriter(w);
     const str = "Foo\n";
@@ -342,9 +350,38 @@ test "Argparse displayUsageWriter" {
         .bin_info = "",
         .bin_usage = "Foo",
         .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &.{});
+    }, .{});
 
     try Parser.displayUsageWriter(w);
     const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    Foo" ++ "\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionsWriter" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const w = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .bin_name = "",
+        .bin_info = "",
+        .bin_usage = "",
+        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, [_]ArgumentParserOption{
+        .{
+            .name = "foo",
+            .short = "-f",
+            .description = "bar",
+        },
+    });
+
+    try Parser.displayOptionsWriter(w);
+    const line1 = bold ++ yellow ++ "OPTIONS\n" ++ reset;
+    const line2 = bold ++ green ++ "    -f" ++ " " ++ reset;
+    const line3 = "\n\t" ++ "bar" ++ "\n\n";
+    const str = line1 ++ line2 ++ line3;
     try testing.expectEqualStrings(list.items, str);
 }

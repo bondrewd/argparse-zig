@@ -152,7 +152,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
                         },
                         .One => blk_inner: {
                             if (option.argument_type == bool) @compileError("Option that takes arguments (non flag) can't be of type bool");
-                            if (option.required) {
+                            if (option.required or option.default_value != null) {
                                 break :blk_inner option.argument_type;
                             } else {
                                 break :blk_inner ?option.argument_type;
@@ -186,7 +186,7 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime options: anytype) 
             inline for (options) |option| {
                 @field(parsed_args, option.name) = switch (option.takes) {
                     .None => false,
-                    .One => if (option.required) undefined else null,
+                    .One => if (option.required or option.default_value != null) undefined else null,
                     .Many => ArrayList(option.argument_type).init(allocator),
                 };
             }
@@ -705,8 +705,8 @@ test "Argparse parseArgumentsWriter 5" {
     const parsed_args = try Parser.parseArgumentsWriter(testing.allocator, &arguments, w);
     defer Parser.deinitArgs(parsed_args);
 
-    try testing.expectEqual(?i32, @TypeOf(parsed_args.foo));
-    try testing.expect(parsed_args.foo.? == -10);
+    try testing.expectEqual(i32, @TypeOf(parsed_args.foo));
+    try testing.expect(parsed_args.foo == -10);
 }
 
 test "Argparse parseArgumentsWriter 6" {
@@ -738,6 +738,6 @@ test "Argparse parseArgumentsWriter 6" {
     const parsed_args = try Parser.parseArgumentsWriter(testing.allocator, &arguments, w);
     defer Parser.deinitArgs(parsed_args);
 
-    try testing.expectEqual(?f64, @TypeOf(parsed_args.foo));
-    try testing.expect(parsed_args.foo.? == -10);
+    try testing.expectEqual(f64, @TypeOf(parsed_args.foo));
+    try testing.expect(parsed_args.foo == -10);
 }

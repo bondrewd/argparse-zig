@@ -1,6 +1,6 @@
 // Libraries
 const std = @import("std");
-const ansi = @import("ansi-zig/src/ansi.zig");
+const ansi = @import("ansi-zig");
 
 // Modules
 const io = std.io;

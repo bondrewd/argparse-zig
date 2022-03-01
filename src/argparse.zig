@@ -243,7 +243,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             var parsed_args: ParserResult = undefined;
 
             // Array for tracking required options
-            var opt_present = [_]bool{false} ** opt_pos.len;
+            var pos_opt_present = [_]bool{false} ** opt_pos.len;
 
             // Initialize result struct
             inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
@@ -289,7 +289,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     @field(parsed_args, opt.name) = true;
                                     i += 1;
                                     opt_found = true;
-                                    opt_present[j] = true;
+                                    pos_opt_present[j] = true;
                                 },
                                 1 => {
                                     // Check if there are enough args
@@ -304,7 +304,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     @field(parsed_args, opt.name) = opt_arg;
                                     i += 2;
                                     opt_found = true;
-                                    opt_present[j] = true;
+                                    pos_opt_present[j] = true;
                                 },
                                 else => |n| {
                                     // Check if there are enough args
@@ -319,7 +319,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     for (opt_args) |opt_arg, k| @field(parsed_args, opt.name)[k] = opt_arg[0..len(opt_arg)];
                                     i += n + 1;
                                     opt_found = true;
-                                    opt_present[j] = true;
+                                    pos_opt_present[j] = true;
                                 },
                             }
 
@@ -334,27 +334,33 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
             // Parse positionals
             i = current;
-            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+            inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
                 .option => {},
                 .positional => |pos| if (current < arguments.len) {
                     // Get slice from null terminated string
                     const arg = arguments[i][0..len(arguments[i])];
                     @field(parsed_args, pos.name) = arg;
                     i += 1;
+                    pos_opt_present[j] = true;
                 },
             };
 
             // Check if required optionals were present
             inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
                 .option => |opt| if (opt.required) {
-                    if (!opt_present[j]) {
+                    if (!pos_opt_present[j]) {
                         const stderr = std.io.getStdErr().writer();
                         try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Required option " ++ bold ++ green ++ opt.name ++ reset ++ " is not present.\n");
                         try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                         std.os.exit(0);
                     }
                 },
-                .positional => {},
+                .positional => |pos| if (!pos_opt_present[j]) {
+                    const stderr = std.io.getStdErr().writer();
+                    try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Positional argument " ++ bold ++ green ++ pos.name ++ reset ++ " is not present.\n");
+                    try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                    std.os.exit(0);
+                },
             };
 
             return parsed_args;

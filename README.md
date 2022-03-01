@@ -11,6 +11,6 @@ three fields describing your app, whereas AppOptionPositional is a struct that
 allows you to control how options are parsed.
 
 After you have build your parser, you only need to use the Parser associated
-function parseArguments. That is all!
+function parseArgumentsAllocator. That is all!
 
-I have also added some examples showing how to build an argument parser.
+I will add some examples showing how to build an argument parser (TODO).

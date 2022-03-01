@@ -178,6 +178,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             try displayUsageWriter(writer);
             try writer.writeByte('\n');
             try displayOptionPositionalWriter(writer);
+            try writer.writeByte('\n');
         }
 
         pub fn displayHelp() !void {

@@ -365,7 +365,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 },
                 .positional => |pos| if (!pos_opt_present[j]) {
                     const stderr = std.io.getStdErr().writer();
-                    try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Positional argument " ++ bold ++ green ++ pos.name ++ reset ++ " is not present.\n");
+                    try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Positional argument " ++ bold ++ green ++ pos.metavar ++ reset ++ " is not present.\n");
                     try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                     std.os.exit(0);
                 },

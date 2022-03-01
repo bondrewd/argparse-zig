@@ -345,11 +345,13 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
             // Check if required optionals were present
             inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
-                .option => |opt| if (opt.required and !opt_present[j]) {
-                    const stderr = std.io.getStdErr().writer();
-                    try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Required option " ++ bold ++ green ++ opt.name ++ reset ++ " is not present.\n");
-                    try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
-                    std.os.exit(0);
+                .option => |opt| if (opt.required) {
+                    if (!opt_present[j]) {
+                        const stderr = std.io.getStdErr().writer();
+                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Required option " ++ bold ++ green ++ opt.name ++ reset ++ " is not present.\n");
+                        try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                        std.os.exit(0);
+                    }
                 },
                 .positional => {},
             };

@@ -6,7 +6,9 @@ const io = std.io;
 const fmt = std.fmt;
 const eql = std.mem.eql;
 const len = std.mem.len;
+const copy = std.mem.copy;
 const testing = std.testing;
+const startsWith = std.mem.startsWith;
 
 // Types
 const File = std.fs.File;
@@ -30,15 +32,15 @@ pub const Version = struct {
     patch: u8,
 };
 
-pub const ParserConfig = struct {
-    bin_name: []const u8,
-    bin_info: []const u8,
-    bin_version: Version,
+pub const AppInfo = struct {
+    app_name: []const u8,
+    app_description: []const u8,
+    app_version: Version,
 };
 
-pub const ParserOption = struct {
+pub const AppOption = struct {
     name: []const u8,
-    long: []const u8,
+    long: ?[]const u8 = null,
     short: ?[]const u8 = null,
     metavar: []const u8 = "ARG",
     description: []const u8,
@@ -46,95 +48,71 @@ pub const ParserOption = struct {
     required: bool = false,
 };
 
-pub const ParserSubcommand = struct {
+pub const AppPositional = struct {
     name: []const u8,
+    metavar: []const u8 = "ARG",
     description: []const u8,
-    opts_subcmds: []const ParserOptionSubcommand,
 };
 
-pub const ParserOptionSubcommand = union(enum) {
-    option: ParserOption,
-    subcommand: ParserSubcommand,
+pub const AppOptionPositional = union(enum) {
+    option: AppOption,
+    positional: AppPositional,
 };
 
-pub fn ArgumentParser(comptime config: ParserConfig, comptime parser_opts_subcmds: []const ParserOptionSubcommand) type {
+pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptionPositional) type {
     return struct {
-        const Self = @This();
-        const help_option = .{
+        const help_option = AppOption{
             .name = "help",
             .long = "--help",
             .short = "-h",
             .description = "Display this and exit",
         };
 
-        pub fn displayNameVersionWriter(name: []const u8, version: Version, writer: anytype) !void {
-            const major = version.major;
-            const minor = version.minor;
-            const patch = version.patch;
+        fn displayNameVersionWriter(writer: anytype) !void {
+            const name = info.app_name;
+            const major = info.app_version.major;
+            const minor = info.app_version.minor;
+            const patch = info.app_version.patch;
 
             try writer.print(bold ++ green ++ "{s}" ++ bold ++ blue ++ " {d}.{d}.{d}\n" ++ reset, .{ name, major, minor, patch });
         }
 
-        pub fn displayParserNameVersionWriter(writer: anytype) !void {
-            try displayNameVersionWriter(config.bin_name, config.bin_version, writer);
-        }
-
-        pub fn displayParserNameVersion() !void {
+        pub fn displayNameVersion() !void {
             const stdout = io.getStdOut().writer();
-
-            try displayParserNameVersionWriter(stdout);
+            try displayNameVersionWriter(stdout);
         }
 
-        pub fn displayInfoWriter(info: []const u8, writer: anytype) !void {
-            try writer.print("{s}\n", .{info});
+        fn displayDescriptionWriter(writer: anytype) !void {
+            try writer.print("{s}\n", .{info.app_description});
         }
 
-        pub fn displayParserInfoWriter(writer: anytype) !void {
-            try displayInfoWriter(config.bin_info, writer);
-        }
-
-        pub fn displayParserInfo() !void {
+        pub fn displayDescription() !void {
             const stdout = io.getStdOut().writer();
-
-            try displayParserInfoWriter(stdout);
+            try displayDescriptionWriter(stdout);
         }
 
-        pub fn displayUsageParserOptionSubcommandWriter(comptime command: []const u8, comptime opts_subcmds: []const ParserOptionSubcommand, writer: anytype) !void {
-            var n_subcmds: usize = 0;
+        fn displayUsageWriter(writer: anytype) !void {
+            try writer.print("{s}", .{bold ++ yellow ++ "USAGE\n" ++ reset});
+            try writer.print("    {s} [OPTION]", .{info.app_name});
 
-            inline for (opts_subcmds) |opt_subcmd| switch (opt_subcmd) {
-                .subcommand => n_subcmds += 1,
+            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+                .positional => |p| try writer.writeAll(" " ++ p.metavar),
                 .option => {},
             };
 
-            const subcmd = if (n_subcmds > 0) "[SUBCOMMAND|OPTION] " else "";
-            const opt = "[OPTION]";
-
-            try writer.print("{s}", .{bold ++ yellow ++ "USAGE\n" ++ reset});
-            try writer.print("    {s} {s}{s}\n", .{ command, subcmd, opt });
+            try writer.writeByte('\n');
         }
 
-        pub fn displayParserUsageWriter(writer: anytype) !void {
-            try displayUsageParserOptionSubcommandWriter(config.bin_name, parser_opts_subcmds, writer);
-        }
-
-        pub fn displayParserUsage() !void {
+        pub fn displayUsage() !void {
             const stdout = io.getStdOut().writer();
-
-            try displayParserUsageWriter(stdout);
+            try displayUsageWriter(stdout);
         }
 
-        pub fn displayParserSubcommandWriter(comptime subcommand: ParserSubcommand, writer: anytype) !void {
-            const name = subcommand.name;
-            const description = subcommand.description;
-
-            try writer.print("    {s}\n", .{bold ++ green ++ name ++ reset});
-            try writer.print("        {s}\n", .{description});
-        }
-
-        pub fn displayParserOptionWriter(comptime option: ParserOption, writer: anytype) !void {
-            const short = if (option.short) |s| s ++ ", " else "";
-            const long = option.long;
+        fn displayOptionWriter(comptime option: AppOption, writer: anytype) !void {
+            const short = if (option.short) |s| s else "";
+            const sep = if (option.short != null and option.long != null) ", " else "";
+            const long = if (option.long) |l| l else "";
+            if (option.short == null and option.long == null) @compileError("Option short and long can't both be empty");
             const metavar = switch (option.takes) {
                 0 => "",
                 1 => " <" ++ option.metavar ++ ">",
@@ -142,25 +120,32 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime parser_opts_subcmd
             };
             const description = option.description;
 
-            try writer.print("    {s}\n", .{bold ++ green ++ short ++ long ++ metavar ++ reset});
+            try writer.print("    {s}\n", .{bold ++ green ++ short ++ sep ++ long ++ metavar ++ reset});
             try writer.print("        {s}\n", .{description});
         }
 
-        pub fn displayParserOptionSubcommandWriter(comptime opts_subcmds: []const ParserOptionSubcommand, writer: anytype) !void {
-            var n_subcmds: usize = 0;
+        fn displayPositionalWriter(comptime positional: AppPositional, writer: anytype) !void {
+            const metavar = positional.metavar;
+            const description = positional.description;
 
-            inline for (opts_subcmds) |opt_subcmd| switch (opt_subcmd) {
-                .subcommand => n_subcmds += 1,
+            try writer.print("    {s}\n", .{bold ++ green ++ metavar ++ reset});
+            try writer.print("        {s}\n", .{description});
+        }
+
+        fn displayOptionPositionalWriter(writer: anytype) !void {
+            var n_pos: usize = 0;
+
+            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+                .positional => n_pos += 1,
                 else => {},
             };
 
-            if (comptime n_subcmds > 0) {
-                try writer.print("{s}", .{bold ++ yellow ++ "SUBCOMMANDS\n" ++ reset});
-                inline for (opts_subcmds) |opt_subcmd| switch (opt_subcmd) {
-                    .subcommand => |subcmd| blk: {
+            if (comptime n_pos > 0) {
+                try writer.print("{s}", .{bold ++ yellow ++ "POSITIONALS\n" ++ reset});
+                inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+                    .positional => |pos| {
                         try writer.print("\n", .{});
-                        try displayParserSubcommandWriter(subcmd, writer);
-                        break :blk;
+                        try displayPositionalWriter(pos, writer);
                     },
                     else => continue,
                 };
@@ -168,37 +153,49 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime parser_opts_subcmd
             }
 
             try writer.print("{s}", .{bold ++ yellow ++ "OPTIONS\n" ++ reset});
-            inline for (opts_subcmds) |opt_subcmd| switch (opt_subcmd) {
-                .option => |opt| blk: {
+            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+                .option => |opt| {
                     try writer.print("\n", .{});
-                    try displayParserOptionWriter(opt, writer);
-                    break :blk;
+                    try displayOptionWriter(opt, writer);
                 },
                 else => {},
             };
 
             try writer.print("\n", .{});
-            try displayParserOptionWriter(help_option, writer);
+            try displayOptionWriter(help_option, writer);
         }
 
-        pub fn displayParserOptionSubcommand(comptime opts_subcmds: []const ParserOptionSubcommand) !void {
+        pub fn displayOptionPositional() !void {
             const stdout = io.getStdOut().writer();
-
-            try displayParserOptionSubcommandWriter(opts_subcmds, stdout);
+            try displayOptionPositionalWriter(stdout);
         }
 
-        fn StructFromOptionSubcommand(comptime opts_subcmds: []const ParserOptionSubcommand) type {
-            const n_fields = opts_subcmds.len;
-            if (n_fields == 0) @compileError("Subcommand can not have zero options and subcommands");
+        fn displayHelpWriter(writer: anytype) !void {
+            try displayNameVersionWriter(writer);
+            try writer.writeByte('\n');
+            try displayDescriptionWriter(writer);
+            try writer.writeByte('\n');
+            try displayUsageWriter(writer);
+            try writer.writeByte('\n');
+            try displayOptionPositionalWriter(writer);
+        }
+
+        pub fn displayHelp() !void {
+            const stdout = io.getStdOut().writer();
+            try displayHelpWriter(stdout);
+        }
+
+        fn ParserResultFromOptionPositional() type {
+            const n_fields = opt_pos.len;
 
             var fields: [n_fields]StructField = undefined;
 
-            inline for (opts_subcmds) |opt_subcmd, i| switch (opt_subcmd) {
-                .option => |opt| blk: {
+            inline for (opt_pos) |opt_pos_, i| comptime switch (opt_pos_) {
+                .option => |opt| {
                     const OptT = switch (opt.takes) {
                         0 => bool,
                         1 => []const u8,
-                        else => [opt.takes][]const u8,
+                        else => |n| [n][]const u8,
                     };
 
                     fields[i] = .{
@@ -208,27 +205,23 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime parser_opts_subcmd
                         .is_comptime = false,
                         .alignment = @alignOf(OptT),
                     };
-
-                    break :blk;
                 },
-                .subcommand => |subcmd| blk: {
-                    const SubcmdT = StructFromOptionSubcommand(subcmd.opts_subcmds);
+                .positional => |pos| {
+                    const PosT = []const u8;
 
                     fields[i] = .{
-                        .name = subcmd.name,
-                        .field_type = SubcmdT,
+                        .name = pos.name,
+                        .field_type = PosT,
                         .default_value = null,
                         .is_comptime = false,
-                        .alignment = @alignOf(SubcmdT),
+                        .alignment = @alignOf(PosT),
                     };
-
-                    break :blk;
                 },
             };
 
             const decls: [0]Declaration = .{};
 
-            const subcommand_type_information = TypeInfo{
+            const parser_result_type_information = TypeInfo{
                 .Struct = .{
                     .layout = .Auto,
                     .fields = &fields,
@@ -237,137 +230,174 @@ pub fn ArgumentParser(comptime config: ParserConfig, comptime parser_opts_subcmd
                 },
             };
 
-            const SubcommandStruct = @Type(subcommand_type_information);
+            const ParserResultT = @Type(parser_result_type_information);
 
-            return SubcommandStruct;
+            return ParserResultT;
         }
 
-        pub const ParserResult = StructFromOptionSubcommand(parser_opts_subcmds);
+        pub const ParserResult = ParserResultFromOptionPositional();
 
-        pub fn parseSlice(comptime T: type, slice: []const u8) !T {
-            switch (@typeInfo(T)) {
-                .Int => return try fmt.parseInt(T, slice, 10),
-                .Float => return try fmt.parseFloat(T, slice),
-                .Pointer => return slice,
-                else => @compileError("Unsopported type for argument: " ++ @typeName(T)),
-            }
-        }
-
-        pub fn parseArgumentsOptionAllocator(arguments: [][*:0]u8, comptime opt: ParserOption, container: anytype, allocator: *Allocator) !usize {
-            const short = opt.short orelse "";
-            const long = opt.long orelse "";
-
-            var consumed: usize = 0;
-            var next_arg = arguments[0][0..len(arguments[0])];
-
-            if (eql(u8, next_arg, short) or eql(u8, next_arg, long)) {
-                consumed += 1;
-
-                switch (opt.takes) {
-                    .n => |n| switch (n) {
-                        0 => @field(container, opt.name) = true,
-                        1 => blk: {
-                            @field(container, opt.name) = try parseSlice(opt.Type, next_arg);
-                            consumed += 1;
-                            break :blk;
-                        },
-                        else => {
-                            try @field(container, opt.name).init(allocator);
-                            try @field(container, opt.name).append(try parseSlice(opt.Type, next_arg));
-                        },
-                    },
-                    .range => |range| switch (range) {
-                        .zero_or_more => {},
-                        .one_or_more => {},
-                    },
-                }
-            }
-        }
-
-        pub fn parseArgumentsParserOptionSubcommandAllocator(arguments: [][*:0]u8, comptime opts_subcmds: []const ParserOptionSubcommand, _: *Allocator) !ParserResult {
+        fn parseArguments(arguments: [][*:0]const u8) !ParserResult {
+            // Result struct
             var parsed_args: ParserResult = undefined;
 
+            // Array for tracking required options
+            var opt_present = [_]bool{false} ** opt_pos.len;
+
+            // Initialize result struct
+            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+                .option => |opt| switch (opt.takes) {
+                    0 => @field(parsed_args, opt.name) = false,
+                    1 => @field(parsed_args, opt.name) = "",
+                    else => |n| {
+                        var i: usize = 0;
+                        while (i < n) : (i += 1) @field(parsed_args, opt.name)[i] = "";
+                    },
+                },
+                .positional => |pos| @field(parsed_args, pos.name) = "",
+            };
+
+            // Parse options
             var i: usize = 0;
-            while (i < arguments.len) : (i += 1) {
+            var current: usize = 0;
+            var opt_found: bool = undefined;
+            while (i < arguments.len) {
+                opt_found = false;
+
                 // Get slice from null terminated string
                 const arg = arguments[i][0..len(arguments[i])];
+                //std.debug.print("DEBUG arg: {s} i: {d}\n", .{ arg, i });
 
-                inline for (opts_subcmds) |opt_subcmd| switch (opt_subcmd) {
-                    .subcommand => |subcmd| blk: {
-                        if (eql(u8, arg, subcmd.name)) {}
-                        break :blk;
-                    },
-                    .option => |opt| blk: {
+                // Check if -h or --help is present
+                if (startsWith(u8, arg, "-h") or startsWith(u8, arg, "--help")) {
+                    const stdout = std.io.getStdOut().writer();
+                    try displayHelpWriter(stdout);
+                    std.os.exit(0);
+                }
+
+                inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
+                    .option => |opt| {
                         const short = opt.short orelse "";
                         const long = opt.long orelse "";
-                        if (eql(u8, arg, short) or eql(u8, arg, long)) {}
-                        break :blk;
+
+                        const starts_with_short = len(short) > 0 and startsWith(u8, arg, short);
+                        const starts_with_long = len(long) > 0 and startsWith(u8, arg, long);
+
+                        if (starts_with_short or starts_with_long) {
+                            switch (opt.takes) {
+                                0 => {
+                                    @field(parsed_args, opt.name) = true;
+                                    i += 1;
+                                    opt_found = true;
+                                    opt_present[j] = true;
+                                    //std.debug.print("DEBUG short: {s} long: {s} arg: {s} i: {d}\n", .{ short, long, arg, i });
+                                },
+                                1 => {
+                                    const opt_arg = arguments[i + 1][0..len(arguments[i + 1])];
+                                    @field(parsed_args, opt.name) = opt_arg;
+                                    i += 2;
+                                    opt_found = true;
+                                    opt_present[j] = true;
+                                    //std.debug.print("DEBUG short: {s} long: {s} arg: {s} i: {d}\n", .{ short, long, arg, i });
+                                },
+                                else => |n| {
+                                    const opt_args = arguments[i + 1 .. i + 1 + n];
+                                    for (opt_args) |opt_arg, k| @field(parsed_args, opt.name)[k] = opt_arg[0..len(opt_arg)];
+                                    i += n + 1;
+                                    opt_found = true;
+                                    opt_present[j] = true;
+                                    //std.debug.print("DEBUG short: {s} long: {s} arg: {s} i: {d}\n", .{ short, long, arg, i });
+                                },
+                            }
+
+                            current = i;
+                        }
+                    },
+                    .positional => if (!opt_found) {
+                        i += 1;
                     },
                 };
             }
 
+            // Parse positionals
+            i = current;
+            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+                .option => {},
+                .positional => |pos| if (current < arguments.len) {
+                    // Get slice from null terminated string
+                    const arg = arguments[i][0..len(arguments[i])];
+                    @field(parsed_args, pos.name) = arg;
+                    i += 1;
+                },
+            };
+
+            // Check if required optionals were present
+            inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
+                .option => |opt| if (opt.required and !opt_present[j]) {
+                    const stderr = std.io.getStdErr().writer();
+                    try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Required option " ++ bold ++ green ++ opt.name ++ reset ++ " is not present.\n");
+                    try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                    std.os.exit(1);
+                },
+                .positional => {},
+            };
+
             return parsed_args;
-        }
-
-        pub fn parseAllocator(allocator: *Allocator) !ParserResult {
-            const arguments: [][*:0]const u8 = std.os.argv;
-
-            return try parseArgumentsParserOptionSubcommandAllocator(arguments, parser_opts_subcmds, allocator);
         }
     };
 }
 
-test "Argparse displayParserNameVersionWriter" {
+test "Argparse displayNameVersionWriter" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
 
     // Get writer
-    const w = list.writer();
+    const lw = list.writer();
 
     const Parser = ArgumentParser(.{
-        .bin_name = "Foo",
-        .bin_info = "",
-        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]ParserOptionSubcommand{});
+        .app_name = "Foo",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
 
-    try Parser.displayParserNameVersionWriter(w);
+    try Parser.displayNameVersionWriter(lw);
     const str = bold ++ green ++ "Foo" ++ bold ++ blue ++ " 1.2.3\n" ++ reset;
     try testing.expectEqualStrings(list.items, str);
 }
 
-test "Argparse displayParserInfoWriter" {
+test "Argparse displayDescriptionWriter" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
 
     // Get writer
-    const w = list.writer();
+    const lw = list.writer();
 
     const Parser = ArgumentParser(.{
-        .bin_name = "",
-        .bin_info = "foo",
-        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]ParserOptionSubcommand{});
+        .app_name = "",
+        .app_description = "foo",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
 
-    try Parser.displayParserInfoWriter(w);
+    try Parser.displayDescriptionWriter(lw);
     const str = "foo\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
-test "Argparse displayParserUsageWriter" {
+test "Argparse displayUsageWriter with option and positional" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
 
     // Get writer
-    const w = list.writer();
+    const lw = list.writer();
 
     const Parser = ArgumentParser(.{
-        .bin_name = "foo",
-        .bin_info = "",
-        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]ParserOptionSubcommand{
+        .app_name = "foo",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
         .{
             .option = .{
                 .name = "bar",
@@ -377,57 +407,152 @@ test "Argparse displayParserUsageWriter" {
             },
         },
         .{
-            .subcommand = .{
+            .positional = .{
                 .name = "baz",
                 .description = "baz",
-                .opts_subcmds = &[_]ParserOptionSubcommand{},
             },
         },
     });
 
-    try Parser.displayParserUsageWriter(w);
-    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [SUBCOMMAND|OPTION] [OPTION]\n";
+    try Parser.displayUsageWriter(lw);
+    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] ARG\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
-test "Argparse displayParserSubcommandWriter" {
+test "Argparse displayUsageWriter without options nor positionals" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
 
     // Get writer
-    const w = list.writer();
+    const lw = list.writer();
 
     const Parser = ArgumentParser(.{
-        .bin_name = "",
-        .bin_info = "",
-        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]ParserOptionSubcommand{});
+        .app_name = "foo",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
 
-    const subcommand = .{
+    try Parser.displayUsageWriter(lw);
+    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayUsageWriter with only options" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "foo",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "bar",
+                .long = "--bar",
+                .short = "-b",
+                .description = "bar",
+            },
+        },
+        .{
+            .option = .{
+                .name = "cux",
+                .long = "--cux",
+                .short = "-c",
+                .description = "cux",
+            },
+        },
+    });
+
+    try Parser.displayUsageWriter(lw);
+    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayUsageWriter with only positionals" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "foo",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .positional = .{
+                .name = "x",
+                .metavar = "X",
+                .description = "x",
+            },
+        },
+        .{
+            .positional = .{
+                .name = "y",
+                .metavar = "Y",
+                .description = "y",
+            },
+        },
+        .{
+            .positional = .{
+                .name = "z",
+                .metavar = "Z",
+                .description = "z",
+            },
+        },
+    });
+
+    try Parser.displayUsageWriter(lw);
+    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] X Y Z\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayPositionalWriter" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
+
+    const positional = .{
         .name = "foo",
+        .metavar = "FOO",
         .description = "bar",
-        .opts_subcmds = &[_]ParserOptionSubcommand{},
     };
 
-    try Parser.displayParserSubcommandWriter(subcommand, w);
-    const str = "    " ++ bold ++ green ++ "foo" ++ reset ++ "\n        bar\n";
+    try Parser.displayPositionalWriter(positional, lw);
+    const str = "    " ++ bold ++ green ++ "FOO" ++ reset ++ "\n        bar\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
-test "Argparse displayParserOptionWriter" {
+test "Argparse displayOptionWriter" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
 
     // Get writer
-    const w = list.writer();
+    const lw = list.writer();
 
     const Parser = ArgumentParser(.{
-        .bin_name = "",
-        .bin_info = "",
-        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]ParserOptionSubcommand{});
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
 
     const option = .{
         .name = "",
@@ -437,26 +562,24 @@ test "Argparse displayParserOptionWriter" {
         .takes = 2,
     };
 
-    try Parser.displayParserOptionWriter(option, w);
+    try Parser.displayOptionWriter(option, lw);
     const str = "    " ++ bold ++ green ++ "-f, --foo <ARG...>" ++ reset ++ "\n        bar\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
-test "Argparse displayParserOptionSubcommandWriter" {
+test "Argparse displayOptionPositionalWriter" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
 
     // Get writer
-    const w = list.writer();
+    const lw = list.writer();
 
     const Parser = ArgumentParser(.{
-        .bin_name = "",
-        .bin_info = "",
-        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]ParserOptionSubcommand{});
-
-    const opts_subcmds = &[_]ParserOptionSubcommand{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
         .{
             .option = .{
                 .name = "foo",
@@ -468,18 +591,18 @@ test "Argparse displayParserOptionSubcommandWriter" {
             },
         },
         .{
-            .subcommand = .{
+            .positional = .{
                 .name = "bar",
+                .metavar = "BAR",
                 .description = "bar",
-                .opts_subcmds = &[_]ParserOptionSubcommand{},
             },
         },
-    };
+    });
 
-    try Parser.displayParserOptionSubcommandWriter(opts_subcmds, w);
+    try Parser.displayOptionPositionalWriter(lw);
 
-    const str1 = bold ++ yellow ++ "SUBCOMMANDS\n" ++ reset ++ "\n";
-    const str2 = "    " ++ bold ++ green ++ "bar" ++ reset ++ "\n";
+    const str1 = bold ++ yellow ++ "POSITIONALS\n" ++ reset ++ "\n";
+    const str2 = "    " ++ bold ++ green ++ "BAR" ++ reset ++ "\n";
     const str3 = "        bar\n\n";
     const str4 = bold ++ yellow ++ "OPTIONS\n" ++ reset ++ "\n";
     const str5 = "    " ++ bold ++ green ++ "-f, --foo <FOO...>" ++ reset ++ "\n";
@@ -491,14 +614,12 @@ test "Argparse displayParserOptionSubcommandWriter" {
     try testing.expectEqualStrings(list.items, str);
 }
 
-test "Argparse StructFromSubcommand" {
+test "Argparse ParserResultTypeFromOptionPositional" {
     const Parser = ArgumentParser(.{
-        .bin_name = "",
-        .bin_info = "",
-        .bin_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]ParserOptionSubcommand{});
-
-    const opts_subcmds = &[_]ParserOptionSubcommand{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
         .{
             .option = .{
                 .name = "foo",
@@ -517,35 +638,23 @@ test "Argparse StructFromSubcommand" {
             },
         },
         .{
-            .option = .{
-                .name = "baz",
-                .long = "--baz",
-                .short = "-z",
-                .description = "baz",
-                .takes = 1,
+            .positional = .{
+                .name = "x",
+                .metavar = "X",
+                .description = "x",
             },
         },
         .{
-            .subcommand = .{
-                .name = "qux",
-                .description = "qux",
-                .opts_subcmds = &[_]ParserOptionSubcommand{
-                    .{
-                        .option = .{
-                            .name = "quux",
-                            .long = "--quux",
-                            .short = "-q",
-                            .description = "quux",
-                            .takes = 2,
-                        },
-                    },
-                },
+            .positional = .{
+                .name = "y",
+                .metavar = "Y",
+                .description = "y",
             },
         },
-    };
+    });
 
-    const OptionSubcommandStruct = Parser.StructFromOptionSubcommand(opts_subcmds);
-    const info = @typeInfo(OptionSubcommandStruct).Struct;
+    const ParserResult = Parser.ParserResultFromOptionPositional();
+    const info = @typeInfo(ParserResult).Struct;
 
     try testing.expect(info.fields.len == 4);
 
@@ -556,23 +665,307 @@ test "Argparse StructFromSubcommand" {
     try testing.expectEqualStrings(info.fields[1].name, "bar");
 
     try testing.expect(info.fields[2].field_type == []const u8);
-    try testing.expectEqualStrings(info.fields[2].name, "baz");
+    try testing.expectEqualStrings(info.fields[2].name, "x");
 
-    var subcmd_struct: OptionSubcommandStruct = .{
-        .foo = true,
-        .bar = [_][]const u8{ "alpha", "beta", "gamma" },
-        .baz = "omega",
-        .qux = .{ .quux = [_][]const u8{ "hello", "world" } },
-    };
+    try testing.expect(info.fields[3].field_type == []const u8);
+    try testing.expectEqualStrings(info.fields[3].name, "y");
+}
 
-    try testing.expect(subcmd_struct.foo);
+test "Argparse parseArguments option takes 0" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .long = "--foo",
+                .short = "-f",
+                .description = "",
+            },
+        },
+        .{
+            .option = .{
+                .name = "bar",
+                .long = "--bar",
+                .description = "",
+            },
+        },
+    });
 
-    try testing.expectEqualStrings(subcmd_struct.bar[0], "alpha");
-    try testing.expectEqualStrings(subcmd_struct.bar[1], "beta");
-    try testing.expectEqualStrings(subcmd_struct.bar[2], "gamma");
+    var args_1 = [_][*:0]const u8{"-f"};
+    var parsed_args_1 = try Parser.parseArguments(args_1[0..]);
+    try testing.expect(parsed_args_1.foo == true);
+    try testing.expect(parsed_args_1.bar == false);
 
-    try testing.expectEqualStrings(subcmd_struct.baz, "omega");
+    var args_2 = [_][*:0]const u8{"--foo"};
+    var parsed_args_2 = try Parser.parseArguments(args_2[0..]);
+    try testing.expect(parsed_args_2.foo == true);
+    try testing.expect(parsed_args_2.bar == false);
 
-    try testing.expectEqualStrings(subcmd_struct.qux.quux[0], "hello");
-    try testing.expectEqualStrings(subcmd_struct.qux.quux[1], "world");
+    var args_3 = [_][*:0]const u8{ "-f", "--bar" };
+    var parsed_args_3 = try Parser.parseArguments(args_3[0..]);
+    try testing.expect(parsed_args_3.foo == true);
+    try testing.expect(parsed_args_3.bar == true);
+}
+
+test "Argparse parseArguments option takes 1" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .long = "--foo",
+                .short = "-f",
+                .description = "",
+                .takes = 1,
+            },
+        },
+        .{
+            .option = .{
+                .name = "bar",
+                .long = "--bar",
+                .description = "",
+                .takes = 1,
+            },
+        },
+    });
+
+    var args_1 = [_][*:0]const u8{ "-f", "abc" };
+    var parsed_args_1 = try Parser.parseArguments(args_1[0..]);
+    try testing.expectEqualStrings(parsed_args_1.foo, "abc");
+    try testing.expectEqualStrings(parsed_args_1.bar, "");
+
+    var args_2 = [_][*:0]const u8{ "--foo", "lala" };
+    var parsed_args_2 = try Parser.parseArguments(args_2[0..]);
+    try testing.expectEqualStrings(parsed_args_2.foo, "lala");
+    try testing.expectEqualStrings(parsed_args_2.bar, "");
+
+    var args_3 = [_][*:0]const u8{ "-f", "a", "--bar", "b" };
+    var parsed_args_3 = try Parser.parseArguments(args_3[0..]);
+    try testing.expectEqualStrings(parsed_args_3.foo, "a");
+    try testing.expectEqualStrings(parsed_args_3.bar, "b");
+
+    var args_4 = [_][*:0]const u8{ "-f", "--bar" };
+    var parsed_args_4 = try Parser.parseArguments(args_4[0..]);
+    try testing.expectEqualStrings(parsed_args_4.foo, "--bar");
+    try testing.expectEqualStrings(parsed_args_4.bar, "");
+}
+
+test "Argparse parseArguments option takes n" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .long = "--foo",
+                .short = "-f",
+                .description = "",
+                .takes = 2,
+            },
+        },
+        .{
+            .option = .{
+                .name = "bar",
+                .short = "-b",
+                .description = "",
+                .takes = 3,
+            },
+        },
+    });
+
+    var args_1 = [_][*:0]const u8{ "-f", "a", "b" };
+    var parsed_args_1 = try Parser.parseArguments(args_1[0..]);
+    try testing.expectEqualStrings(parsed_args_1.foo[0], "a");
+    try testing.expectEqualStrings(parsed_args_1.foo[1], "b");
+    try testing.expectEqualStrings(parsed_args_1.bar[0], "");
+    try testing.expectEqualStrings(parsed_args_1.bar[1], "");
+    try testing.expectEqualStrings(parsed_args_1.bar[2], "");
+
+    var args_2 = [_][*:0]const u8{ "--foo", "x", "y" };
+    var parsed_args_2 = try Parser.parseArguments(args_2[0..]);
+    try testing.expectEqualStrings(parsed_args_2.foo[0], "x");
+    try testing.expectEqualStrings(parsed_args_2.foo[1], "y");
+    try testing.expectEqualStrings(parsed_args_2.bar[0], "");
+    try testing.expectEqualStrings(parsed_args_2.bar[1], "");
+    try testing.expectEqualStrings(parsed_args_2.bar[2], "");
+
+    var args_3 = [_][*:0]const u8{ "-b", "1", "2", "3" };
+    var parsed_args_3 = try Parser.parseArguments(args_3[0..]);
+    try testing.expectEqualStrings(parsed_args_3.foo[0], "");
+    try testing.expectEqualStrings(parsed_args_3.foo[1], "");
+    try testing.expectEqualStrings(parsed_args_3.bar[0], "1");
+    try testing.expectEqualStrings(parsed_args_3.bar[1], "2");
+    try testing.expectEqualStrings(parsed_args_3.bar[2], "3");
+
+    var args_4 = [_][*:0]const u8{ "-b", "-f", "a", "b" };
+    var parsed_args_4 = try Parser.parseArguments(args_4[0..]);
+    try testing.expectEqualStrings(parsed_args_4.foo[0], "");
+    try testing.expectEqualStrings(parsed_args_4.foo[1], "");
+    try testing.expectEqualStrings(parsed_args_4.bar[0], "-f");
+    try testing.expectEqualStrings(parsed_args_4.bar[1], "a");
+    try testing.expectEqualStrings(parsed_args_4.bar[2], "b");
+}
+
+test "Argparse parseArguments positional" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .positional = .{
+                .name = "x",
+                .metavar = "X",
+                .description = "x",
+            },
+        },
+        .{
+            .positional = .{
+                .name = "y",
+                .metavar = "Y",
+                .description = "y",
+            },
+        },
+    });
+
+    var args_1 = [_][*:0]const u8{ "1", "2" };
+    var parsed_args_1 = try Parser.parseArguments(args_1[0..]);
+    try testing.expectEqualStrings(parsed_args_1.x, "1");
+    try testing.expectEqualStrings(parsed_args_1.y, "2");
+}
+
+test "Argparse parseArguments" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .short = "-f",
+                .description = "",
+            },
+        },
+        .{
+            .option = .{
+                .name = "bar",
+                .short = "-b",
+                .description = "",
+                .takes = 1,
+            },
+        },
+        .{
+            .option = .{
+                .name = "baz",
+                .short = "-z",
+                .description = "",
+                .takes = 2,
+            },
+        },
+        .{
+            .positional = .{
+                .name = "cux",
+                .description = "",
+            },
+        },
+    });
+
+    var args_1 = [_][*:0]const u8{};
+    var parsed_args_1 = try Parser.parseArguments(args_1[0..]);
+    try testing.expect(parsed_args_1.foo == false);
+    try testing.expectEqualStrings(parsed_args_1.bar, "");
+    try testing.expectEqualStrings(parsed_args_1.baz[0], "");
+    try testing.expectEqualStrings(parsed_args_1.baz[1], "");
+    try testing.expectEqualStrings(parsed_args_1.cux, "");
+
+    var args_2 = [_][*:0]const u8{"-f"};
+    var parsed_args_2 = try Parser.parseArguments(args_2[0..]);
+    try testing.expect(parsed_args_2.foo == true);
+    try testing.expectEqualStrings(parsed_args_2.bar, "");
+    try testing.expectEqualStrings(parsed_args_2.baz[0], "");
+    try testing.expectEqualStrings(parsed_args_2.baz[1], "");
+    try testing.expectEqualStrings(parsed_args_2.cux, "");
+
+    var args_3 = [_][*:0]const u8{ "-b", "a" };
+    var parsed_args_3 = try Parser.parseArguments(args_3[0..]);
+    try testing.expect(parsed_args_3.foo == false);
+    try testing.expectEqualStrings(parsed_args_3.bar, "a");
+    try testing.expectEqualStrings(parsed_args_3.baz[0], "");
+    try testing.expectEqualStrings(parsed_args_3.baz[1], "");
+    try testing.expectEqualStrings(parsed_args_3.cux, "");
+
+    var args_4 = [_][*:0]const u8{ "-z", "a", "b" };
+    var parsed_args_4 = try Parser.parseArguments(args_4[0..]);
+    try testing.expect(parsed_args_4.foo == false);
+    try testing.expectEqualStrings(parsed_args_4.bar, "");
+    try testing.expectEqualStrings(parsed_args_4.baz[0], "a");
+    try testing.expectEqualStrings(parsed_args_4.baz[1], "b");
+    try testing.expectEqualStrings(parsed_args_4.cux, "");
+
+    var args_5 = [_][*:0]const u8{"a"};
+    var parsed_args_5 = try Parser.parseArguments(args_5[0..]);
+    try testing.expect(parsed_args_5.foo == false);
+    try testing.expectEqualStrings(parsed_args_5.bar, "");
+    try testing.expectEqualStrings(parsed_args_5.baz[0], "");
+    try testing.expectEqualStrings(parsed_args_5.baz[1], "");
+    try testing.expectEqualStrings(parsed_args_5.cux, "a");
+
+    var args_6 = [_][*:0]const u8{ "-f", "-b", "a", "-z", "b", "c", "d" };
+    var parsed_args_6 = try Parser.parseArguments(args_6[0..]);
+    try testing.expect(parsed_args_6.foo == true);
+    try testing.expectEqualStrings(parsed_args_6.bar, "a");
+    try testing.expectEqualStrings(parsed_args_6.baz[0], "b");
+    try testing.expectEqualStrings(parsed_args_6.baz[1], "c");
+    try testing.expectEqualStrings(parsed_args_6.cux, "d");
+
+    var args_7 = [_][*:0]const u8{ "-b", "a", "-f", "-z", "b", "c", "d" };
+    var parsed_args_7 = try Parser.parseArguments(args_7[0..]);
+    try testing.expect(parsed_args_7.foo == true);
+    try testing.expectEqualStrings(parsed_args_7.bar, "a");
+    try testing.expectEqualStrings(parsed_args_7.baz[0], "b");
+    try testing.expectEqualStrings(parsed_args_7.baz[1], "c");
+    try testing.expectEqualStrings(parsed_args_7.cux, "d");
+
+    var args_8 = [_][*:0]const u8{ "-z", "b", "c", "-b", "a", "-f", "d" };
+    var parsed_args_8 = try Parser.parseArguments(args_8[0..]);
+    try testing.expect(parsed_args_8.foo == true);
+    try testing.expectEqualStrings(parsed_args_8.bar, "a");
+    try testing.expectEqualStrings(parsed_args_8.baz[0], "b");
+    try testing.expectEqualStrings(parsed_args_8.baz[1], "c");
+    try testing.expectEqualStrings(parsed_args_8.cux, "d");
+}
+
+test "Argparse parseArguments option required" {
+    const Parser = ArgumentParser(.{
+        .app_name = "name",
+        .app_description = "description",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .long = "--foo",
+                .short = "-f",
+                .description = "description",
+                .required = true,
+            },
+        },
+    });
+
+    var args_1 = [_][*:0]const u8{"-f"};
+    var parsed_args_1 = try Parser.parseArguments(args_1[0..]);
+    try testing.expect(parsed_args_1.foo == true);
+
+    var args_2 = [_][*:0]const u8{"--foo"};
+    var parsed_args_2 = try Parser.parseArguments(args_2[0..]);
+    try testing.expect(parsed_args_2.foo == true);
 }

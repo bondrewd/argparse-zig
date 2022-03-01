@@ -1,3 +1,0 @@
-[submodule "src/ansi-zig"]
-	path = ext/ansi-zig
-	url = https://github.com/bondrewd/ansi-zig.git

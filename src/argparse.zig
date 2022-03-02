@@ -174,7 +174,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             };
 
             if (comptime n_pos > 0) {
-                try writer.print("{s}", .{bold ++ yellow ++ "POSITIONALS\n" ++ reset});
+                try writer.print("{s}", .{bold ++ yellow ++ "ARGUMENTS\n" ++ reset});
                 inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
                     .positional => |pos| {
                         try writer.print("\n", .{});
@@ -721,7 +721,7 @@ test "Argparse displayOptionPositionalWriter" {
 
     try Parser.displayOptionPositionalWriter(lw);
 
-    const str1 = bold ++ yellow ++ "POSITIONALS\n" ++ reset ++ "\n";
+    const str1 = bold ++ yellow ++ "ARGUMENTS\n" ++ reset ++ "\n";
     const str2 = "    " ++ bold ++ green ++ "BAR" ++ reset ++ "\n";
     const str3 = "        bar\n\n";
     const str4 = bold ++ yellow ++ "OPTIONS\n" ++ reset ++ "\n";

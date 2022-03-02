@@ -145,7 +145,15 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             };
             const description = option.description;
 
-            try writer.print("    {s}\n", .{bold ++ green ++ short ++ sep ++ long ++ metavar ++ reset});
+            try writer.print("    {s}", .{bold ++ green ++ short ++ sep ++ long ++ metavar ++ reset});
+
+            if (option.default) |default| {
+                try writer.writeAll(bold ++ green ++ " (default:" ++ reset);
+                for (default) |val| try writer.print(bold ++ blue ++ " {s}" ++ reset, .{val});
+                try writer.writeAll(bold ++ green ++ ")" ++ reset);
+            }
+            try writer.writeAll("\n");
+
             try writer.print("        {s}\n", .{description});
         }
 
@@ -642,6 +650,40 @@ test "Argparse displayOptionWriter" {
 
     try Parser.displayOptionWriter(option, lw);
     const str = "    " ++ bold ++ green ++ "-f, --foo <ARG...>" ++ reset ++ "\n        bar\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionWriter with default value" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
+
+    const option = .{
+        .name = "",
+        .long = "--foo",
+        .short = "-f",
+        .description = "bar",
+        .takes = 2,
+        .default = &.{ "x", "y" },
+    };
+
+    try Parser.displayOptionWriter(option, lw);
+    const str1 = "    " ++ bold ++ green ++ "-f, --foo <ARG...>" ++ reset;
+    const str2 = bold ++ green ++ " (default:" ++ reset;
+    const str3 = bold ++ blue ++ " x" ++ reset;
+    const str4 = bold ++ blue ++ " y" ++ reset;
+    const str5 = bold ++ green ++ ")" ++ reset;
+    const str6 = "\n        bar\n";
+    const str = str1 ++ str2 ++ str3 ++ str4 ++ str5 ++ str6;
     try testing.expectEqualStrings(list.items, str);
 }
 

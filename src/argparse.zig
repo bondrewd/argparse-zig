@@ -73,7 +73,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 0 => {
                     if (opt.default) |default| {
                         if (default.len != 1) @compileError("Default value for option with 0 arguments can only be a single string");
-                        if (!eql(u8, default[0], "true") and !eql(u8, default[0], "false")) @compileError("Default value for option with 0 arguments can only be either \"true\" or \"false\" strings");
+                        if (!eql(u8, default[0], "true") and !eql(u8, default[0], "false")) @compileError("Default value for option with 0 arguments can only be either \"true\" or \"false\"");
                     }
                 },
                 1 => if (opt.default) |default| if (default.len != 1) @compileError("Default value for option with 1 argument can only be a single string"),

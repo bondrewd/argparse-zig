@@ -8,6 +8,7 @@ const eql = std.mem.eql;
 const len = std.mem.len;
 const copy = std.mem.copy;
 const testing = std.testing;
+const indexOf = std.mem.indexOf;
 const startsWith = std.mem.startsWith;
 
 // Types
@@ -46,6 +47,7 @@ pub const AppOption = struct {
     description: []const u8,
     takes: comptime_int = 0,
     required: bool = false,
+    default: ?[]const []const u8 = null,
 };
 
 pub const AppPositional = struct {
@@ -60,6 +62,30 @@ pub const AppOptionPositional = union(enum) {
 };
 
 pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptionPositional) type {
+    // Validate opt_pos
+    inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+        .option => |opt| {
+            if (opt.name.len == 0) @compileError("Option name can't be an empty string");
+            if (indexOf(u8, opt.name, " ") != null) @compileError("Option name can't contain blank spaces");
+            if (opt.short == null and opt.long == null) @compileError("Option short and long can't both be empty");
+            if (opt.required and opt.default != null) @compileError("Required option can't have default values");
+            switch (opt.takes) {
+                0 => {
+                    if (opt.default) |default| {
+                        if (default.len != 1) @compileError("Default value for option with 0 arguments can only be a single string");
+                        if (!eql(u8, default[0], "true") and !eql(u8, default[0], "false")) @compileError("Default value for option with 0 arguments can only be either \"true\" or \"false\" strings");
+                    }
+                },
+                1 => if (opt.default) |default| if (default.len != 1) @compileError("Default value for option with 1 argument can only be a single string"),
+                else => |n| if (opt.default) |default| if (default.len != n) @compileError("Number of default values for option with many arguments need to the same as the number of taken arguments"),
+            }
+        },
+        .positional => |pos| {
+            if (pos.name.len == 0) @compileError("Positional name can't be an empty string");
+            if (indexOf(u8, pos.name, " ") != null) @compileError("Positional name can't contain blank spaces");
+        },
+    };
+
     return struct {
         const help_option = AppOption{
             .name = "help",
@@ -112,7 +138,6 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             const short = if (option.short) |s| s else "";
             const sep = if (option.short != null and option.long != null) ", " else "";
             const long = if (option.long) |l| l else "";
-            if (option.short == null and option.long == null) @compileError("Option short and long can't both be empty");
             const metavar = switch (option.takes) {
                 0 => "",
                 1 => " <" ++ option.metavar ++ ">",
@@ -245,14 +270,27 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             // Array for tracking required options
             var pos_opt_present = [_]bool{false} ** opt_pos.len;
 
-            // Initialize result struct
+            // Initialize result struct with default values
             inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
                 .option => |opt| switch (opt.takes) {
-                    0 => @field(parsed_args, opt.name) = false,
-                    1 => @field(parsed_args, opt.name) = "",
+                    0 => if (opt.default) |default| {
+                        if (eql(u8, default[0], "true")) @field(parsed_args, opt.name) = true;
+                        if (eql(u8, default[0], "false")) @field(parsed_args, opt.name) = false;
+                    } else {
+                        @field(parsed_args, opt.name) = false;
+                    },
+                    1 => if (opt.default) |default| {
+                        @field(parsed_args, opt.name) = default[0];
+                    } else {
+                        @field(parsed_args, opt.name) = "";
+                    },
                     else => |n| {
-                        var i: usize = 0;
-                        while (i < n) : (i += 1) @field(parsed_args, opt.name)[i] = "";
+                        if (opt.default) |default| {
+                            for (default) |val, i| @field(parsed_args, opt.name)[i] = val;
+                        } else {
+                            var i: usize = 0;
+                            while (i < n) : (i += 1) @field(parsed_args, opt.name)[i] = "";
+                        }
                     },
                 },
                 .positional => |pos| @field(parsed_args, pos.name) = "",
@@ -919,47 +957,47 @@ test "Argparse parseArgumentSlice" {
         },
     });
 
-    var args_1 = [_][]const u8{};
+    var args_1 = [_][]const u8{"a"};
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
     try testing.expect(parsed_args_1.foo == false);
     try testing.expectEqualStrings(parsed_args_1.bar, "");
     try testing.expectEqualStrings(parsed_args_1.baz[0], "");
     try testing.expectEqualStrings(parsed_args_1.baz[1], "");
-    try testing.expectEqualStrings(parsed_args_1.cux, "");
+    try testing.expectEqualStrings(parsed_args_1.cux, "a");
 
-    var args_2 = [_][]const u8{"-f"};
+    var args_2 = [_][]const u8{ "-f", "a" };
     var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
     try testing.expect(parsed_args_2.foo == true);
     try testing.expectEqualStrings(parsed_args_2.bar, "");
     try testing.expectEqualStrings(parsed_args_2.baz[0], "");
     try testing.expectEqualStrings(parsed_args_2.baz[1], "");
-    try testing.expectEqualStrings(parsed_args_2.cux, "");
+    try testing.expectEqualStrings(parsed_args_2.cux, "a");
 
-    var args_3 = [_][]const u8{ "-b", "a" };
+    var args_3 = [_][]const u8{ "-b", "a", "b" };
     var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
     try testing.expect(parsed_args_3.foo == false);
     try testing.expectEqualStrings(parsed_args_3.bar, "a");
     try testing.expectEqualStrings(parsed_args_3.baz[0], "");
     try testing.expectEqualStrings(parsed_args_3.baz[1], "");
-    try testing.expectEqualStrings(parsed_args_3.cux, "");
+    try testing.expectEqualStrings(parsed_args_3.cux, "b");
 
-    var args_4 = [_][]const u8{ "-z", "a", "b" };
+    var args_4 = [_][]const u8{ "-z", "a", "b", "c" };
     var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
     try testing.expect(parsed_args_4.foo == false);
     try testing.expectEqualStrings(parsed_args_4.bar, "");
     try testing.expectEqualStrings(parsed_args_4.baz[0], "a");
     try testing.expectEqualStrings(parsed_args_4.baz[1], "b");
-    try testing.expectEqualStrings(parsed_args_4.cux, "");
+    try testing.expectEqualStrings(parsed_args_4.cux, "c");
 
-    var args_5 = [_][]const u8{"a"};
+    var args_5 = [_][]const u8{ "-f", "-b", "a", "-z", "b", "c", "d" };
     var parsed_args_5 = try Parser.parseArgumentSlice(args_5[0..]);
-    try testing.expect(parsed_args_5.foo == false);
-    try testing.expectEqualStrings(parsed_args_5.bar, "");
-    try testing.expectEqualStrings(parsed_args_5.baz[0], "");
-    try testing.expectEqualStrings(parsed_args_5.baz[1], "");
-    try testing.expectEqualStrings(parsed_args_5.cux, "a");
+    try testing.expect(parsed_args_5.foo == true);
+    try testing.expectEqualStrings(parsed_args_5.bar, "a");
+    try testing.expectEqualStrings(parsed_args_5.baz[0], "b");
+    try testing.expectEqualStrings(parsed_args_5.baz[1], "c");
+    try testing.expectEqualStrings(parsed_args_5.cux, "d");
 
-    var args_6 = [_][]const u8{ "-f", "-b", "a", "-z", "b", "c", "d" };
+    var args_6 = [_][]const u8{ "-b", "a", "-f", "-z", "b", "c", "d" };
     var parsed_args_6 = try Parser.parseArgumentSlice(args_6[0..]);
     try testing.expect(parsed_args_6.foo == true);
     try testing.expectEqualStrings(parsed_args_6.bar, "a");
@@ -967,21 +1005,110 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_6.baz[1], "c");
     try testing.expectEqualStrings(parsed_args_6.cux, "d");
 
-    var args_7 = [_][]const u8{ "-b", "a", "-f", "-z", "b", "c", "d" };
+    var args_7 = [_][]const u8{ "-z", "b", "c", "-b", "a", "-f", "d" };
     var parsed_args_7 = try Parser.parseArgumentSlice(args_7[0..]);
     try testing.expect(parsed_args_7.foo == true);
     try testing.expectEqualStrings(parsed_args_7.bar, "a");
     try testing.expectEqualStrings(parsed_args_7.baz[0], "b");
     try testing.expectEqualStrings(parsed_args_7.baz[1], "c");
     try testing.expectEqualStrings(parsed_args_7.cux, "d");
+}
 
-    var args_8 = [_][]const u8{ "-z", "b", "c", "-b", "a", "-f", "d" };
-    var parsed_args_8 = try Parser.parseArgumentSlice(args_8[0..]);
-    try testing.expect(parsed_args_8.foo == true);
-    try testing.expectEqualStrings(parsed_args_8.bar, "a");
-    try testing.expectEqualStrings(parsed_args_8.baz[0], "b");
-    try testing.expectEqualStrings(parsed_args_8.baz[1], "c");
-    try testing.expectEqualStrings(parsed_args_8.cux, "d");
+test "Argparse parseArgumentSlice with default values" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .short = "-f",
+                .description = "",
+                .default = &.{"true"},
+            },
+        },
+        .{
+            .option = .{
+                .name = "bar",
+                .short = "-b",
+                .description = "",
+                .takes = 1,
+                .default = &.{"a"},
+            },
+        },
+        .{
+            .option = .{
+                .name = "baz",
+                .short = "-z",
+                .description = "",
+                .takes = 2,
+                .default = &.{ "b", "c" },
+            },
+        },
+        .{
+            .positional = .{
+                .name = "cux",
+                .description = "",
+            },
+        },
+    });
+
+    var args_1 = [_][]const u8{"alpha"};
+    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    try testing.expect(parsed_args_1.foo == true);
+    try testing.expectEqualStrings(parsed_args_1.bar, "a");
+    try testing.expectEqualStrings(parsed_args_1.baz[0], "b");
+    try testing.expectEqualStrings(parsed_args_1.baz[1], "c");
+    try testing.expectEqualStrings(parsed_args_1.cux, "alpha");
+
+    var args_2 = [_][]const u8{ "-f", "alpha" };
+    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    try testing.expect(parsed_args_2.foo == true);
+    try testing.expectEqualStrings(parsed_args_2.bar, "a");
+    try testing.expectEqualStrings(parsed_args_2.baz[0], "b");
+    try testing.expectEqualStrings(parsed_args_2.baz[1], "c");
+    try testing.expectEqualStrings(parsed_args_2.cux, "alpha");
+
+    var args_3 = [_][]const u8{ "-b", "x", "alpha" };
+    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    try testing.expect(parsed_args_3.foo == true);
+    try testing.expectEqualStrings(parsed_args_3.bar, "x");
+    try testing.expectEqualStrings(parsed_args_3.baz[0], "b");
+    try testing.expectEqualStrings(parsed_args_3.baz[1], "c");
+    try testing.expectEqualStrings(parsed_args_3.cux, "alpha");
+
+    var args_4 = [_][]const u8{ "-z", "x", "y", "alpha" };
+    var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
+    try testing.expect(parsed_args_4.foo == true);
+    try testing.expectEqualStrings(parsed_args_4.bar, "a");
+    try testing.expectEqualStrings(parsed_args_4.baz[0], "x");
+    try testing.expectEqualStrings(parsed_args_4.baz[1], "y");
+    try testing.expectEqualStrings(parsed_args_4.cux, "alpha");
+
+    var args_5 = [_][]const u8{ "-f", "-b", "x", "-z", "y", "z", "alpha" };
+    var parsed_args_5 = try Parser.parseArgumentSlice(args_5[0..]);
+    try testing.expect(parsed_args_5.foo == true);
+    try testing.expectEqualStrings(parsed_args_5.bar, "x");
+    try testing.expectEqualStrings(parsed_args_5.baz[0], "y");
+    try testing.expectEqualStrings(parsed_args_5.baz[1], "z");
+    try testing.expectEqualStrings(parsed_args_5.cux, "alpha");
+
+    var args_6 = [_][]const u8{ "-b", "x", "-f", "-z", "y", "z", "alpha" };
+    var parsed_args_6 = try Parser.parseArgumentSlice(args_6[0..]);
+    try testing.expect(parsed_args_6.foo == true);
+    try testing.expectEqualStrings(parsed_args_6.bar, "x");
+    try testing.expectEqualStrings(parsed_args_6.baz[0], "y");
+    try testing.expectEqualStrings(parsed_args_6.baz[1], "z");
+    try testing.expectEqualStrings(parsed_args_6.cux, "alpha");
+
+    var args_7 = [_][]const u8{ "-z", "x", "y", "-b", "z", "-f", "alpha" };
+    var parsed_args_7 = try Parser.parseArgumentSlice(args_7[0..]);
+    try testing.expect(parsed_args_7.foo == true);
+    try testing.expectEqualStrings(parsed_args_7.bar, "z");
+    try testing.expectEqualStrings(parsed_args_7.baz[0], "x");
+    try testing.expectEqualStrings(parsed_args_7.baz[1], "y");
+    try testing.expectEqualStrings(parsed_args_7.cux, "alpha");
 }
 
 test "Argparse parseArgumentSlice option required" {

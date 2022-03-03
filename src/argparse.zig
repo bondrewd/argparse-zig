@@ -152,6 +152,11 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 for (default) |val| try writer.print(bold ++ blue ++ " {s}" ++ reset, .{val});
                 try writer.writeAll(bold ++ green ++ ")" ++ reset);
             }
+
+            if (option.required) {
+                try writer.writeAll(bold ++ green ++ " (required)" ++ reset);
+            }
+
             try writer.writeAll("\n");
 
             try writer.print("        {s}\n", .{description});
@@ -649,6 +654,66 @@ test "Argparse displayOptionWriter" {
 
     try Parser.displayOptionWriter(option, lw);
     const str = "    " ++ bold ++ green ++ "-f, --foo <ARG...>" ++ reset ++ "\n        bar\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionWriter with metavar" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
+
+    const option = .{
+        .name = "",
+        .long = "--foo",
+        .short = "-f",
+        .description = "bar",
+        .takes = 2,
+        .metavar = "FOO",
+    };
+
+    try Parser.displayOptionWriter(option, lw);
+    const str = "    " ++ bold ++ green ++ "-f, --foo <FOO...>" ++ reset ++ "\n        bar\n";
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionWriter required" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
+
+    const option = .{
+        .name = "",
+        .long = "--foo",
+        .short = "-f",
+        .description = "bar",
+        .takes = 2,
+        .metavar = "FOO",
+        .required = true,
+    };
+
+    try Parser.displayOptionWriter(option, lw);
+    const str1 = "    " ++ bold ++ green ++ "-f, --foo <FOO...>" ++ reset;
+    const str2 = bold ++ green ++ " (required)" ++ reset;
+    const str3 = "\n        bar\n";
+    const str = str1 ++ str2 ++ str3;
     try testing.expectEqualStrings(list.items, str);
 }
 

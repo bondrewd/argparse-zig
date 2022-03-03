@@ -73,10 +73,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             if (opt.required and opt.default != null) @compileError("Required option can't have default values");
             switch (opt.takes) {
                 0 => {
-                    if (opt.default) |default| {
-                        if (default.len != 1) @compileError("Default value for option with 0 arguments can only be a single string");
-                        if (!eql(u8, default[0], "true") and !eql(u8, default[0], "false")) @compileError("Default value for option with 0 arguments can only be either \"true\" or \"false\"");
-                    }
+                    if (opt.default != null) @compileError("Option with 0 arguments can't have default values");
                     if (opt.possible_values != null) @compileError("Option with 0 arguments can't have possible values");
                 },
                 1 => if (opt.default) |default| {
@@ -325,8 +322,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
                 .option => |opt| switch (opt.takes) {
                     0 => if (opt.default) |default| {
-                        if (eql(u8, default[0], "true")) @field(parsed_args, opt.name) = true;
-                        if (eql(u8, default[0], "false")) @field(parsed_args, opt.name) = false;
+                        if (eql(u8, default[0], "on")) @field(parsed_args, opt.name) = true;
+                        if (eql(u8, default[0], "off")) @field(parsed_args, opt.name) = false;
                     } else {
                         @field(parsed_args, opt.name) = false;
                     },
@@ -1351,7 +1348,6 @@ test "Argparse parseArgumentSlice with default values" {
                 .name = "foo",
                 .short = "-f",
                 .description = "",
-                .default = &.{"true"},
             },
         },
         .{
@@ -1383,7 +1379,7 @@ test "Argparse parseArgumentSlice with default values" {
 
     var args_1 = [_][]const u8{"alpha"};
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
-    try testing.expect(parsed_args_1.foo == true);
+    try testing.expect(parsed_args_1.foo == false);
     try testing.expectEqualStrings(parsed_args_1.bar, "a");
     try testing.expectEqualStrings(parsed_args_1.baz[0], "b");
     try testing.expectEqualStrings(parsed_args_1.baz[1], "c");
@@ -1399,7 +1395,7 @@ test "Argparse parseArgumentSlice with default values" {
 
     var args_3 = [_][]const u8{ "-b", "x", "alpha" };
     var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
-    try testing.expect(parsed_args_3.foo == true);
+    try testing.expect(parsed_args_3.foo == false);
     try testing.expectEqualStrings(parsed_args_3.bar, "x");
     try testing.expectEqualStrings(parsed_args_3.baz[0], "b");
     try testing.expectEqualStrings(parsed_args_3.baz[1], "c");
@@ -1407,7 +1403,7 @@ test "Argparse parseArgumentSlice with default values" {
 
     var args_4 = [_][]const u8{ "-z", "x", "y", "alpha" };
     var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
-    try testing.expect(parsed_args_4.foo == true);
+    try testing.expect(parsed_args_4.foo == false);
     try testing.expectEqualStrings(parsed_args_4.bar, "a");
     try testing.expectEqualStrings(parsed_args_4.baz[0], "x");
     try testing.expectEqualStrings(parsed_args_4.baz[1], "y");

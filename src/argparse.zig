@@ -401,7 +401,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 .option => |opt| if (opt.required) {
                     if (!pos_opt_present[j]) {
                         const stderr = std.io.getStdErr().writer();
-                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Required option " ++ bold ++ green ++ opt.name ++ reset ++ " is not present.\n");
+                        const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Required option " ++ bold ++ green ++ opt_display_name ++ reset ++ " is not present.\n");
                         try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                         std.os.exit(0);
                     }

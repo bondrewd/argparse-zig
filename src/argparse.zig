@@ -16,16 +16,17 @@ const File = std.fs.File;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const TypeInfo = std.builtin.TypeInfo;
+const EnumField = TypeInfo.EnumField;
 const StructField = TypeInfo.StructField;
 const Declaration = TypeInfo.Declaration;
 
 // Ansi format
 const reset = "\x1b[000m";
 const bold = "\x1b[001m";
-const red = "\x1b[091m";
-const blue = "\x1b[094m";
-const green = "\x1b[092m";
-const yellow = "\x1b[093m";
+const red = bold ++ "\x1b[091m";
+const blue = bold ++ "\x1b[094m";
+const green = bold ++ "\x1b[092m";
+const yellow = bold ++ "\x1b[093m";
 
 pub const Version = struct {
     major: u8,
@@ -48,6 +49,7 @@ pub const AppOption = struct {
     takes: comptime_int = 0,
     required: bool = false,
     default: ?[]const []const u8 = null,
+    possible_values: ?[]const []const u8 = null,
 };
 
 pub const AppPositional = struct {
@@ -75,9 +77,30 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                         if (default.len != 1) @compileError("Default value for option with 0 arguments can only be a single string");
                         if (!eql(u8, default[0], "true") and !eql(u8, default[0], "false")) @compileError("Default value for option with 0 arguments can only be either \"true\" or \"false\"");
                     }
+                    if (opt.possible_values != null) @compileError("Option with 0 arguments can't have possible values");
                 },
-                1 => if (opt.default) |default| if (default.len != 1) @compileError("Default value for option with 1 argument can only be a single string"),
-                else => |n| if (opt.default) |default| if (default.len != n) @compileError("Number of default values for option with many arguments need to the same as the number of taken arguments"),
+                1 => if (opt.default) |default| {
+                    if (default.len != 1) @compileError("Default value for option with 1 argument can only be a single string");
+                    if (opt.possible_values) |possible_values| {
+                        var found_valid_value = false;
+                        for (possible_values) |possible_value| {
+                            if (eql(u8, default[0], possible_value)) found_valid_value = true;
+                        }
+                        if (!found_valid_value) @compileError("Invalid default value for option with possible values");
+                    }
+                },
+                else => |n| if (opt.default) |defaults| {
+                    if (defaults.len != n) @compileError("Number of default values for option with many arguments need to the same as the number of taken arguments");
+                    if (opt.possible_values) |possible_values| {
+                        for (defaults) |default| {
+                            var found_valid_value = false;
+                            for (possible_values) |possible_value| {
+                                if (eql(u8, default, possible_value)) found_valid_value = true;
+                            }
+                            if (!found_valid_value) @compileError("Invalid default value for option with possible values");
+                        }
+                    }
+                },
             }
         },
         .positional => |pos| {
@@ -100,7 +123,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             const minor = info.app_version.minor;
             const patch = info.app_version.patch;
 
-            try writer.print(bold ++ green ++ "{s}" ++ bold ++ blue ++ " {d}.{d}.{d}\n" ++ reset, .{ name, major, minor, patch });
+            try writer.print(green ++ "{s}" ++ blue ++ " {d}.{d}.{d}\n" ++ reset, .{ name, major, minor, patch });
         }
 
         pub fn displayNameVersion() !void {
@@ -118,7 +141,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
         }
 
         fn displayUsageWriter(writer: anytype) !void {
-            try writer.print("{s}", .{bold ++ yellow ++ "USAGE\n" ++ reset});
+            try writer.print("{s}", .{yellow ++ "USAGE\n" ++ reset});
             try writer.print("    {s} [OPTION]", .{info.app_name});
 
             inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
@@ -145,16 +168,25 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             };
             const description = option.description;
 
-            try writer.print("    {s}", .{bold ++ green ++ short ++ sep ++ long ++ metavar ++ reset});
+            try writer.print("    {s}", .{green ++ short ++ sep ++ long ++ metavar ++ reset});
+
+            if (option.possible_values) |possible_values| {
+                try writer.writeAll(green ++ " (possible values:" ++ reset);
+                for (possible_values) |possible_value, i| {
+                    const comma = if (i == 0) " " else ", ";
+                    try writer.print(green ++ "{s}" ++ reset ++ blue ++ "{s}" ++ reset, .{ comma, possible_value });
+                }
+                try writer.writeAll(green ++ ")" ++ reset);
+            }
 
             if (option.default) |default| {
-                try writer.writeAll(bold ++ green ++ " (default:" ++ reset);
-                for (default) |val| try writer.print(bold ++ blue ++ " {s}" ++ reset, .{val});
-                try writer.writeAll(bold ++ green ++ ")" ++ reset);
+                try writer.writeAll(green ++ " (default:" ++ reset);
+                for (default) |val| try writer.print(blue ++ " {s}" ++ reset, .{val});
+                try writer.writeAll(green ++ ")" ++ reset);
             }
 
             if (option.required) {
-                try writer.writeAll(bold ++ green ++ " (required)" ++ reset);
+                try writer.writeAll(green ++ " (required)" ++ reset);
             }
 
             try writer.writeAll("\n");
@@ -166,7 +198,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             const metavar = positional.metavar;
             const description = positional.description;
 
-            try writer.print("    {s}\n", .{bold ++ green ++ metavar ++ reset});
+            try writer.print("    {s}\n", .{green ++ metavar ++ reset});
             try writer.print("        {s}\n", .{description});
         }
 
@@ -179,7 +211,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             };
 
             if (comptime n_pos > 0) {
-                try writer.print("{s}", .{bold ++ yellow ++ "ARGUMENTS\n" ++ reset});
+                try writer.print("{s}", .{yellow ++ "ARGUMENTS\n" ++ reset});
                 inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
                     .positional => |pos| {
                         try writer.print("\n", .{});
@@ -190,7 +222,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 try writer.print("\n", .{});
             }
 
-            try writer.print("{s}", .{bold ++ yellow ++ "OPTIONS\n" ++ reset});
+            try writer.print("{s}", .{yellow ++ "OPTIONS\n" ++ reset});
             inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
                 .option => |opt| {
                     try writer.print("\n", .{});
@@ -344,13 +376,32 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     if (i + 1 >= arguments.len) {
                                         const stderr = std.io.getStdErr().writer();
                                         const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
-                                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ bold ++ green ++ opt_display_name ++ reset ++ ".\n");
-                                        try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                                        try stderr.writeAll(red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ green ++ opt_display_name ++ reset ++ ".\n");
+                                        try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                                         std.os.exit(0);
                                     }
 
-                                    const opt_arg = arguments[i + 1][0..len(arguments[i + 1])];
-                                    @field(parsed_args, opt.name) = opt_arg;
+                                    const arg = arguments[i + 1];
+                                    if (opt.possible_values) |possible_values| {
+                                        var found_valid_value = false;
+                                        for (possible_values) |possible_value| {
+                                            if (eql(u8, arg, possible_value)) {
+                                                @field(parsed_args, opt.name) = arg;
+                                                found_valid_value = true;
+                                            }
+                                        }
+
+                                        if (!found_valid_value) {
+                                            const stderr = std.io.getStdErr().writer();
+                                            const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+                                            try stderr.print(red ++ "Error: " ++ reset ++ "Invalid argument " ++ green ++ "{s}" ++ reset ++ " for option " ++ green ++ opt_display_name ++ reset ++ ".\n", .{arg});
+                                            try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                                            std.os.exit(0);
+                                        }
+                                    } else {
+                                        @field(parsed_args, opt.name) = arg;
+                                    }
+
                                     i += 2;
                                     opt_found = true;
                                     pos_opt_present[j] = true;
@@ -360,13 +411,32 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     if (i + n >= arguments.len) {
                                         const stderr = std.io.getStdErr().writer();
                                         const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
-                                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ bold ++ green ++ opt_display_name ++ reset ++ ".\n");
-                                        try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                                        try stderr.writeAll(red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ green ++ opt_display_name ++ reset ++ ".\n");
+                                        try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                                         std.os.exit(0);
                                     }
 
-                                    const opt_args = arguments[i + 1 .. i + 1 + n];
-                                    for (opt_args) |opt_arg, k| @field(parsed_args, opt.name)[k] = opt_arg[0..len(opt_arg)];
+                                    const args = arguments[i + 1 .. i + 1 + n];
+                                    for (args) |arg, k| {
+                                        if (opt.possible_values) |possible_values| {
+                                            var found_valid_value = false;
+                                            for (possible_values) |possible_value| {
+                                                if (eql(u8, arg, possible_value)) @field(parsed_args, opt.name)[k] = arg;
+                                                found_valid_value = true;
+                                            }
+
+                                            if (!found_valid_value) {
+                                                const stderr = std.io.getStdErr().writer();
+                                                const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+                                                try stderr.print(red ++ "Error: " ++ reset ++ "Invalid argument " ++ green ++ "{s}" ++ reset ++ " for option " ++ green ++ opt_display_name ++ reset ++ ".\n", .{arg});
+                                                try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                                                std.os.exit(0);
+                                            }
+                                        } else {
+                                            @field(parsed_args, opt.name)[k] = arg;
+                                        }
+                                    }
+
                                     i += n + 1;
                                     opt_found = true;
                                     pos_opt_present[j] = true;
@@ -389,8 +459,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                     // Check if there are enough args
                     if (current >= arguments.len) {
                         const stderr = std.io.getStdErr().writer();
-                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing positional " ++ bold ++ green ++ pos.metavar ++ reset ++ ".\n");
-                        try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                        try stderr.writeAll(red ++ "Error: " ++ reset ++ "Missing positional " ++ green ++ pos.metavar ++ reset ++ ".\n");
+                        try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                         std.os.exit(0);
                     }
 
@@ -407,15 +477,15 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                     if (!pos_opt_present[j]) {
                         const stderr = std.io.getStdErr().writer();
                         const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
-                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Required option " ++ bold ++ green ++ opt_display_name ++ reset ++ " is not present.\n");
-                        try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                        try stderr.writeAll(red ++ "Error: " ++ reset ++ "Required option " ++ green ++ opt_display_name ++ reset ++ " is not present.\n");
+                        try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                         std.os.exit(0);
                     }
                 },
                 .positional => |pos| if (!pos_opt_present[j]) {
                     const stderr = std.io.getStdErr().writer();
-                    try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Positional argument " ++ bold ++ green ++ pos.metavar ++ reset ++ " is not present.\n");
-                    try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
+                    try stderr.writeAll(red ++ "Error: " ++ reset ++ "Positional argument " ++ green ++ pos.metavar ++ reset ++ " is not present.\n");
+                    try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                     std.os.exit(0);
                 },
             };
@@ -451,7 +521,7 @@ test "Argparse displayNameVersionWriter" {
     }, &[_]AppOptionPositional{});
 
     try Parser.displayNameVersionWriter(lw);
-    const str = bold ++ green ++ "Foo" ++ bold ++ blue ++ " 1.2.3\n" ++ reset;
+    const str = green ++ "Foo" ++ blue ++ " 1.2.3\n" ++ reset;
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -505,7 +575,7 @@ test "Argparse displayUsageWriter with option and positional" {
     });
 
     try Parser.displayUsageWriter(lw);
-    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] BAZ\n";
+    const str = yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] BAZ\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -524,7 +594,7 @@ test "Argparse displayUsageWriter without options nor positionals" {
     }, &[_]AppOptionPositional{});
 
     try Parser.displayUsageWriter(lw);
-    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
+    const str = yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -560,7 +630,7 @@ test "Argparse displayUsageWriter with only options" {
     });
 
     try Parser.displayUsageWriter(lw);
-    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
+    const str = yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -601,7 +671,7 @@ test "Argparse displayUsageWriter with only positionals" {
     });
 
     try Parser.displayUsageWriter(lw);
-    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] X Y Z\n";
+    const str = yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] X Y Z\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -626,7 +696,7 @@ test "Argparse displayPositionalWriter" {
     };
 
     try Parser.displayPositionalWriter(positional, lw);
-    const str = "    " ++ bold ++ green ++ "FOO" ++ reset ++ "\n        bar\n";
+    const str = "    " ++ green ++ "FOO" ++ reset ++ "\n        bar\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -653,7 +723,7 @@ test "Argparse displayOptionWriter" {
     };
 
     try Parser.displayOptionWriter(option, lw);
-    const str = "    " ++ bold ++ green ++ "-f, --foo <ARG...>" ++ reset ++ "\n        bar\n";
+    const str = "    " ++ green ++ "-f, --foo <ARG...>" ++ reset ++ "\n        bar\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -681,7 +751,7 @@ test "Argparse displayOptionWriter with metavar" {
     };
 
     try Parser.displayOptionWriter(option, lw);
-    const str = "    " ++ bold ++ green ++ "-f, --foo <FOO...>" ++ reset ++ "\n        bar\n";
+    const str = "    " ++ green ++ "-f, --foo <FOO...>" ++ reset ++ "\n        bar\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -710,8 +780,8 @@ test "Argparse displayOptionWriter required" {
     };
 
     try Parser.displayOptionWriter(option, lw);
-    const str1 = "    " ++ bold ++ green ++ "-f, --foo <FOO...>" ++ reset;
-    const str2 = bold ++ green ++ " (required)" ++ reset;
+    const str1 = "    " ++ green ++ "-f, --foo <FOO...>" ++ reset;
+    const str2 = green ++ " (required)" ++ reset;
     const str3 = "\n        bar\n";
     const str = str1 ++ str2 ++ str3;
     try testing.expectEqualStrings(list.items, str);
@@ -741,13 +811,56 @@ test "Argparse displayOptionWriter with default value" {
     };
 
     try Parser.displayOptionWriter(option, lw);
-    const str1 = "    " ++ bold ++ green ++ "-f, --foo <ARG...>" ++ reset;
-    const str2 = bold ++ green ++ " (default:" ++ reset;
-    const str3 = bold ++ blue ++ " x" ++ reset;
-    const str4 = bold ++ blue ++ " y" ++ reset;
-    const str5 = bold ++ green ++ ")" ++ reset;
+    const str1 = "    " ++ green ++ "-f, --foo <ARG...>" ++ reset;
+    const str2 = green ++ " (default:" ++ reset;
+    const str3 = blue ++ " x" ++ reset;
+    const str4 = blue ++ " y" ++ reset;
+    const str5 = green ++ ")" ++ reset;
     const str6 = "\n        bar\n";
     const str = str1 ++ str2 ++ str3 ++ str4 ++ str5 ++ str6;
+    try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionWriter with possible values" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{});
+
+    const option = .{
+        .name = "",
+        .long = "--foo",
+        .short = "-f",
+        .description = "bar",
+        .takes = 2,
+        .default = &.{ "x", "y" },
+        .possible_values = &.{ "x", "y", "z" },
+    };
+
+    try Parser.displayOptionWriter(option, lw);
+    const str1 = "    " ++ green ++ "-f, --foo <ARG...>" ++ reset;
+    const str2 = green ++ " (possible values:" ++ reset;
+    const str3 = green ++ " " ++ reset ++ blue ++ "x" ++ reset;
+    const str4 = green ++ ", " ++ reset ++ blue ++ "y" ++ reset;
+    const str5 = green ++ ", " ++ reset ++ blue ++ "z" ++ reset;
+    const str6 = green ++ ")" ++ reset;
+    const str7 = green ++ " (default:" ++ reset;
+    const str8 = blue ++ " x" ++ reset;
+    const str9 = blue ++ " y" ++ reset;
+    const str10 = green ++ ")" ++ reset;
+    const str11 = "\n        bar\n";
+    const str_a = str1 ++ str2 ++ str3 ++ str4 ++ str5;
+    const str_b = str6 ++ str7 ++ str8 ++ str9 ++ str10;
+    const str_c = str11;
+    const str = str_a ++ str_b ++ str_c;
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -785,13 +898,13 @@ test "Argparse displayOptionPositionalWriter" {
 
     try Parser.displayOptionPositionalWriter(lw);
 
-    const str1 = bold ++ yellow ++ "ARGUMENTS\n" ++ reset ++ "\n";
-    const str2 = "    " ++ bold ++ green ++ "BAR" ++ reset ++ "\n";
+    const str1 = yellow ++ "ARGUMENTS\n" ++ reset ++ "\n";
+    const str2 = "    " ++ green ++ "BAR" ++ reset ++ "\n";
     const str3 = "        bar\n\n";
-    const str4 = bold ++ yellow ++ "OPTIONS\n" ++ reset ++ "\n";
-    const str5 = "    " ++ bold ++ green ++ "-f, --foo <FOO...>" ++ reset ++ "\n";
+    const str4 = yellow ++ "OPTIONS\n" ++ reset ++ "\n";
+    const str5 = "    " ++ green ++ "-f, --foo <FOO...>" ++ reset ++ "\n";
     const str6 = "        foo\n\n";
-    const str7 = "    " ++ bold ++ green ++ "-h, --help" ++ reset ++ "\n";
+    const str7 = "    " ++ green ++ "-h, --help" ++ reset ++ "\n";
     const str8 = "        Display this and exit\n";
     const str = str1 ++ str2 ++ str3 ++ str4 ++ str5 ++ str6 ++ str7 ++ str8;
 
@@ -996,6 +1109,106 @@ test "Argparse parseArgumentSlice option takes n" {
     try testing.expectEqualStrings(parsed_args_4.bar[0], "-f");
     try testing.expectEqualStrings(parsed_args_4.bar[1], "a");
     try testing.expectEqualStrings(parsed_args_4.bar[2], "b");
+}
+
+test "Argparse parseArgumentSlice option with possible values" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .long = "--foo",
+                .short = "-f",
+                .description = "",
+                .takes = 1,
+                .possible_values = &.{ "a", "b", "c" },
+            },
+        },
+        .{
+            .option = .{
+                .name = "bar",
+                .long = "--bar",
+                .description = "",
+                .takes = 2,
+                .possible_values = &.{ "1", "2", "3" },
+            },
+        },
+    });
+
+    var args_1 = [_][]const u8{ "-f", "a" };
+    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    try testing.expectEqualStrings(parsed_args_1.foo, "a");
+    try testing.expectEqualStrings(parsed_args_1.bar[0], "");
+    try testing.expectEqualStrings(parsed_args_1.bar[1], "");
+
+    var args_2 = [_][]const u8{ "--foo", "b" };
+    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    try testing.expectEqualStrings(parsed_args_2.foo, "b");
+    try testing.expectEqualStrings(parsed_args_2.bar[0], "");
+    try testing.expectEqualStrings(parsed_args_2.bar[1], "");
+
+    var args_3 = [_][]const u8{ "-f", "a", "--bar", "1", "2" };
+    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    try testing.expectEqualStrings(parsed_args_3.foo, "a");
+    try testing.expectEqualStrings(parsed_args_3.bar[0], "1");
+    try testing.expectEqualStrings(parsed_args_3.bar[1], "2");
+}
+
+test "Argparse parseArgumentSlice option with possible values and default value" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &[_]AppOptionPositional{
+        .{
+            .option = .{
+                .name = "foo",
+                .long = "--foo",
+                .short = "-f",
+                .description = "",
+                .takes = 1,
+                .possible_values = &.{ "a", "b", "c" },
+                .default = &.{"b"},
+            },
+        },
+        .{
+            .option = .{
+                .name = "bar",
+                .long = "--bar",
+                .description = "",
+                .takes = 2,
+                .possible_values = &.{ "1", "2", "3" },
+                .default = &.{ "1", "3" },
+            },
+        },
+    });
+
+    var args_1 = [_][]const u8{ "-f", "a" };
+    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    try testing.expectEqualStrings(parsed_args_1.foo, "a");
+    try testing.expectEqualStrings(parsed_args_1.bar[0], "1");
+    try testing.expectEqualStrings(parsed_args_1.bar[1], "3");
+
+    var args_2 = [_][]const u8{ "--foo", "b" };
+    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    try testing.expectEqualStrings(parsed_args_2.foo, "b");
+    try testing.expectEqualStrings(parsed_args_2.bar[0], "1");
+    try testing.expectEqualStrings(parsed_args_2.bar[1], "3");
+
+    var args_3 = [_][]const u8{ "-f", "a", "--bar", "1", "2" };
+    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    try testing.expectEqualStrings(parsed_args_3.foo, "a");
+    try testing.expectEqualStrings(parsed_args_3.bar[0], "1");
+    try testing.expectEqualStrings(parsed_args_3.bar[1], "2");
+
+    var args_4 = [_][]const u8{};
+    var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
+    try testing.expectEqualStrings(parsed_args_4.foo, "b");
+    try testing.expectEqualStrings(parsed_args_4.bar[0], "1");
+    try testing.expectEqualStrings(parsed_args_4.bar[1], "3");
 }
 
 test "Argparse parseArgumentSlice positional" {

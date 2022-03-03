@@ -311,11 +311,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             while (i < arguments.len) {
                 opt_found = false;
 
-                // Get slice from null terminated string
-                const arg = arguments[i][0..len(arguments[i])];
-
                 // Check if -h or --help is present
-                if (startsWith(u8, arg, "-h") or startsWith(u8, arg, "--help")) {
+                if (startsWith(u8, arguments[i], "-h") or startsWith(u8, arguments[i], "--help")) {
                     const stdout = std.io.getStdOut().writer();
                     try displayHelpWriter(stdout);
                     std.os.exit(0);
@@ -326,8 +323,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                         const short = opt.short orelse "";
                         const long = opt.long orelse "";
 
-                        const starts_with_short = len(short) > 0 and startsWith(u8, arg, short);
-                        const starts_with_long = len(long) > 0 and startsWith(u8, arg, long);
+                        const starts_with_short = len(short) > 0 and startsWith(u8, arguments[i], short);
+                        const starts_with_long = len(long) > 0 and startsWith(u8, arguments[i], long);
 
                         if (starts_with_short or starts_with_long) {
                             switch (opt.takes) {

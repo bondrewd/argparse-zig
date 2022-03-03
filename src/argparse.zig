@@ -369,30 +369,28 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                             current = i;
                         }
                     },
-                    .positional => if (!opt_found) {
-                        i += 1;
-                    },
+                    .positional => {},
                 };
+
+                if (!opt_found) i += 1;
             }
 
             // Parse positionals
-            i = current;
             inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
                 .option => {},
                 .positional => |pos| if (current < arguments.len) {
                     // Check if there are enough args
-                    if (i >= arguments.len) {
+                    if (current >= arguments.len) {
                         const stderr = std.io.getStdErr().writer();
                         try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing positional " ++ bold ++ green ++ pos.metavar ++ reset ++ ".\n");
                         try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                         std.os.exit(0);
                     }
 
-                    // Get slice from null terminated string
-                    const arg = arguments[i][0..len(arguments[i])];
-                    @field(parsed_args, pos.name) = arg;
-                    i += 1;
+                    // Store argument
+                    @field(parsed_args, pos.name) = arguments[current];
                     pos_opt_present[j] = true;
+                    current += 1;
                 },
             };
 

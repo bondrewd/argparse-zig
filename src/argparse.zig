@@ -102,6 +102,12 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                     }
                 },
             }
+            if (opt.possible_values) |possible_values| {
+                for (possible_values) |possible_value| {
+                    if (possible_value.len == 0) @compileError("Possible value can't be an empty string");
+                    if (indexOf(u8, possible_value, " ") != null) @compileError("Possible value can't contain blank spaces");
+                }
+            }
         },
         .positional => |pos| {
             if (pos.name.len == 0) @compileError("Positional name can't be an empty string");

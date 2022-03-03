@@ -52,7 +52,7 @@ pub const AppOption = struct {
 
 pub const AppPositional = struct {
     name: []const u8,
-    metavar: []const u8 = "ARG",
+    metavar: []const u8,
     description: []const u8,
 };
 
@@ -338,7 +338,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     // Check if there are enough args
                                     if (i + 1 >= arguments.len) {
                                         const stderr = std.io.getStdErr().writer();
-                                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ bold ++ green ++ opt.name ++ reset ++ ".\n");
+                                        const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+                                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ bold ++ green ++ opt_display_name ++ reset ++ ".\n");
                                         try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                                         std.os.exit(0);
                                     }
@@ -353,7 +354,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     // Check if there are enough args
                                     if (i + n >= arguments.len) {
                                         const stderr = std.io.getStdErr().writer();
-                                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ bold ++ green ++ opt.name ++ reset ++ ".\n");
+                                        const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+                                        try stderr.writeAll(bold ++ red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ bold ++ green ++ opt_display_name ++ reset ++ ".\n");
                                         try stderr.writeAll("Use " ++ bold ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information.\n");
                                         std.os.exit(0);
                                     }
@@ -491,12 +493,13 @@ test "Argparse displayUsageWriter with option and positional" {
             .positional = .{
                 .name = "baz",
                 .description = "baz",
+                .metavar = "BAZ",
             },
         },
     });
 
     try Parser.displayUsageWriter(lw);
-    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] ARG\n";
+    const str = bold ++ yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION] BAZ\n";
     try testing.expectEqualStrings(list.items, str);
 }
 
@@ -990,6 +993,7 @@ test "Argparse parseArgumentSlice" {
             .positional = .{
                 .name = "cux",
                 .description = "",
+                .metavar = "CUX",
             },
         },
     });
@@ -1087,6 +1091,7 @@ test "Argparse parseArgumentSlice with default values" {
             .positional = .{
                 .name = "cux",
                 .description = "",
+                .metavar = "CUX",
             },
         },
     });

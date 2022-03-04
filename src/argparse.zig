@@ -173,18 +173,18 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
             try writer.print("    {s}", .{green ++ short ++ sep ++ long ++ metavar ++ reset});
 
+            if (option.default) |default| {
+                try writer.writeAll(green ++ " (default:" ++ reset);
+                for (default) |val| try writer.print(blue ++ " {s}" ++ reset, .{val});
+                try writer.writeAll(green ++ ")" ++ reset);
+            }
+
             if (option.possible_values) |possible_values| {
                 try writer.writeAll(green ++ " (possible values:" ++ reset);
                 for (possible_values) |possible_value, i| {
                     const comma = if (i == 0) " " else ", ";
                     try writer.print(green ++ "{s}" ++ reset ++ blue ++ "{s}" ++ reset, .{ comma, possible_value });
                 }
-                try writer.writeAll(green ++ ")" ++ reset);
-            }
-
-            if (option.default) |default| {
-                try writer.writeAll(green ++ " (default:" ++ reset);
-                for (default) |val| try writer.print(blue ++ " {s}" ++ reset, .{val});
                 try writer.writeAll(green ++ ")" ++ reset);
             }
 
@@ -850,14 +850,14 @@ test "Argparse displayOptionWriter with possible values" {
 
     try Parser.displayOptionWriter(option, lw);
     const str1 = "    " ++ green ++ "-f, --foo <ARG...>" ++ reset;
-    const str2 = green ++ " (possible values:" ++ reset;
-    const str3 = green ++ " " ++ reset ++ blue ++ "x" ++ reset;
-    const str4 = green ++ ", " ++ reset ++ blue ++ "y" ++ reset;
-    const str5 = green ++ ", " ++ reset ++ blue ++ "z" ++ reset;
-    const str6 = green ++ ")" ++ reset;
-    const str7 = green ++ " (default:" ++ reset;
-    const str8 = blue ++ " x" ++ reset;
-    const str9 = blue ++ " y" ++ reset;
+    const str2 = green ++ " (default:" ++ reset;
+    const str3 = blue ++ " x" ++ reset;
+    const str4 = blue ++ " y" ++ reset;
+    const str5 = green ++ ")" ++ reset;
+    const str6 = green ++ " (possible values:" ++ reset;
+    const str7 = green ++ " " ++ reset ++ blue ++ "x" ++ reset;
+    const str8 = green ++ ", " ++ reset ++ blue ++ "y" ++ reset;
+    const str9 = green ++ ", " ++ reset ++ blue ++ "z" ++ reset;
     const str10 = green ++ ")" ++ reset;
     const str11 = "\n        bar\n";
     const str_a = str1 ++ str2 ++ str3 ++ str4 ++ str5;

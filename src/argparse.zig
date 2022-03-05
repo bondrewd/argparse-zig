@@ -100,12 +100,12 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                 if (indexOf(u8, possible_value, " ") != null) @compileError("Possible value can't contain blank spaces");
             }
         }
-        if (opt.conflicts_with) |conflict_names| {
-            for (conflict_names) |conflict_name| {
-                if (eql(u8, opt.name, conflict_name)) @compileError("Option can't conflict with itself");
+        if (opt.conflicts_with) |conflicting_names| {
+            for (conflicting_names) |conflicting_name| {
+                if (eql(u8, opt.name, conflicting_name)) @compileError("Option can't conflict with itself");
                 var conflict_exists = false;
-                for (opt) |opt_| {
-                    if (eql(u8, opt_.name, conflict_name)) conflict_exists = true;
+                for (options) |opt_| {
+                    if (eql(u8, opt_.name, conflicting_name)) conflict_exists = true;
                 }
                 if (!conflict_exists) @compileError("Unknown conflicting option");
             }
@@ -194,12 +194,12 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                 try writer.writeAll(green ++ " (required)" ++ reset);
             }
 
-            if (option.conflicts_with) |conflict_names| {
+            if (option.conflicts_with) |conflicting_names| {
                 try writer.writeAll(green ++ " (conflicting options:" ++ reset);
-                for (conflict_names) |conflict_name, i| {
+                for (conflicting_names) |conflicting_name, i| {
                     const comma = if (i == 0) " " else ", ";
                     inline for (options) |opt| {
-                        if (eql(u8, conflict_name, opt.name)) {
+                        if (eql(u8, conflicting_name, opt.name)) {
                             const name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
                             try writer.print(green ++ "{s}" ++ reset ++ blue ++ "{s}" ++ reset, .{ comma, name });
                         }

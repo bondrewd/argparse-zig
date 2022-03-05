@@ -50,6 +50,7 @@ pub const AppOption = struct {
     required: bool = false,
     default: ?[]const []const u8 = null,
     possible_values: ?[]const []const u8 = null,
+    conflicts_with: ?[]const []const u8 = null,
 };
 
 pub const AppPositional = struct {
@@ -103,6 +104,21 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 for (possible_values) |possible_value| {
                     if (possible_value.len == 0) @compileError("Possible value can't be an empty string");
                     if (indexOf(u8, possible_value, " ") != null) @compileError("Possible value can't contain blank spaces");
+                }
+            }
+            if (opt.conflicts_with) |conflict_names| {
+                for (conflict_names) |conflict_name| {
+                    if (eql(u8, opt.name, conflict_name)) @compileError("Option can't conflict with itself");
+                    var conflict_exists = false;
+                    for (opt_pos) |opt_pos__| {
+                        switch (opt_pos__) {
+                            .option => |opt_| {
+                                if (eql(u8, opt_.name, conflict_name)) conflict_exists = true;
+                            },
+                            .positional => {},
+                        }
+                    }
+                    if (!conflict_exists) @compileError("Unknown conflicting option");
                 }
             }
         },
@@ -190,6 +206,23 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
             if (option.required) {
                 try writer.writeAll(green ++ " (required)" ++ reset);
+            }
+
+            if (option.conflicts_with) |conflict_names| {
+                try writer.writeAll(green ++ " (conflicting options:" ++ reset);
+                for (conflict_names) |conflict_name, i| {
+                    const comma = if (i == 0) " " else ", ";
+                    inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
+                        .option => |opt| {
+                            if (eql(u8, conflict_name, opt.name)) {
+                                const name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+                                try writer.print(green ++ "{s}" ++ reset ++ blue ++ "{s}" ++ reset, .{ comma, name });
+                            }
+                        },
+                        .positional => {},
+                    };
+                }
+                try writer.writeAll(green ++ ")" ++ reset);
             }
 
             try writer.writeAll("\n");
@@ -344,7 +377,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             initParserResult(&parsed_args);
 
             // Array for tracking required options
-            var pos_opt_present = [_]bool{false} ** opt_pos.len;
+            var opt_pos_present = [_]bool{false} ** opt_pos.len;
 
             // Parse options
             var i: usize = 0;
@@ -371,7 +404,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
                         if (starts_with_short or starts_with_long) {
                             // Check if option was already parsed
-                            if (pos_opt_present[j]) try returnErrorRepeatedOption(opt);
+                            if (opt_pos_present[j]) try returnErrorRepeatedOption(opt);
                             // Parse option and option arguments
                             switch (opt.takes) {
                                 0 => {
@@ -381,7 +414,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     i += 1;
                                     // Turn on flags
                                     opt_found = true;
-                                    pos_opt_present[j] = true;
+                                    opt_pos_present[j] = true;
                                 },
                                 1 => {
                                     // Check if there are enough args
@@ -395,7 +428,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     i += 2;
                                     // Turn on flags
                                     opt_found = true;
-                                    pos_opt_present[j] = true;
+                                    opt_pos_present[j] = true;
                                 },
                                 else => |n| {
                                     // Check if there are enough args
@@ -411,7 +444,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     i += n + 1;
                                     // Turn on flags
                                     opt_found = true;
-                                    pos_opt_present[j] = true;
+                                    opt_pos_present[j] = true;
                                 },
                             }
                             // Update parsing counter
@@ -433,16 +466,37 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
                     // Store argument
                     @field(parsed_args, pos.name) = arguments[current];
-                    pos_opt_present[j] = true;
+                    opt_pos_present[j] = true;
                     current += 1;
                 },
             };
 
             // Check if required optionals were present
             inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
-                .option => |opt| if (opt.required and !pos_opt_present[j]) try returnErrorMissingRequiredOption(opt),
-                .positional => |pos| if (!pos_opt_present[j]) try returnErrorMissingPositional(pos),
+                .option => |opt| if (opt.required and !opt_pos_present[j]) try returnErrorMissingRequiredOption(opt),
+                .positional => |pos| if (!opt_pos_present[j]) try returnErrorMissingPositional(pos),
             };
+
+            // Check conflicting optionals
+            inline for (opt_pos) |opt_pos_, j| {
+                switch (opt_pos_) {
+                    .option => |j_opt| if (j_opt.conflicts_with) |conflict_names| {
+                        for (conflict_names) |name| {
+                            inline for (opt_pos) |opt_pos__, k| switch (opt_pos__) {
+                                .option => |k_opt| {
+                                    var t1 = eql(u8, k_opt.name, name);
+                                    var t2 = opt_pos_present[j];
+                                    var t3 = opt_pos_present[k];
+                                    var conflict = t1 and t2 and t3;
+                                    if (conflict) try returnErrorConflictingOptions(j_opt, k_opt);
+                                },
+                                .positional => {},
+                            };
+                        }
+                    },
+                    .positional => {},
+                }
+            }
 
             return parsed_args;
         }
@@ -572,6 +626,29 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
         fn returnErrorRepeatedOption(comptime opt: AppOption) !void {
             const stderr = std.io.getStdErr().writer();
             try returnErrorRepeatedOptionWriter(opt, stderr);
+        }
+
+        fn returnErrorConflictingOptionsWriter(comptime opt1: AppOption, comptime opt2: AppOption, writer: anytype) !void {
+            const name1 = if (opt1.long) |l| l else if (opt1.short) |s| s else opt1.name;
+            const name2 = if (opt2.long) |l| l else if (opt2.short) |s| s else opt2.name;
+
+            const str1 = red ++ "Error: " ++ reset;
+            const str2 = "Options ";
+            const str3 = green ++ name1 ++ reset;
+            const str4 = " and ";
+            const str5 = green ++ name2 ++ reset;
+            const str6 = " can't both be active\n";
+            const tmp1 = str1 ++ str2 ++ str3 ++ str4 ++ str5 ++ str6;
+
+            try writer.writeAll(tmp1);
+            try suggestHelpOptionWriter(writer);
+
+            return error.ConflictingOptions;
+        }
+
+        fn returnErrorConflictingOptions(comptime opt1: AppOption, comptime opt2: AppOption) !void {
+            const stderr = std.io.getStdErr().writer();
+            try returnErrorConflictingOptionsWriter(opt1, opt2, stderr);
         }
     };
 }

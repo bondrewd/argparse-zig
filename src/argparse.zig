@@ -311,38 +311,40 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
         pub const ParserResult = ParserResultFromOptionPositional();
 
-        fn parseArgumentSlice(arguments: [][]const u8) !ParserResult {
-            // Result struct
-            var parsed_args: ParserResult = undefined;
-
-            // Array for tracking required options
-            var pos_opt_present = [_]bool{false} ** opt_pos.len;
-
-            // Initialize result struct with default values
+        pub fn initParserResult(parser_result: *ParserResult) void {
             inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
                 .option => |opt| switch (opt.takes) {
                     0 => if (opt.default) |default| {
-                        if (eql(u8, default[0], "on")) @field(parsed_args, opt.name) = true;
-                        if (eql(u8, default[0], "off")) @field(parsed_args, opt.name) = false;
+                        if (eql(u8, default[0], "on")) @field(parser_result, opt.name) = true;
+                        if (eql(u8, default[0], "off")) @field(parser_result, opt.name) = false;
                     } else {
-                        @field(parsed_args, opt.name) = false;
+                        @field(parser_result, opt.name) = false;
                     },
                     1 => if (opt.default) |default| {
-                        @field(parsed_args, opt.name) = default[0];
+                        @field(parser_result, opt.name) = default[0];
                     } else {
-                        @field(parsed_args, opt.name) = "";
+                        @field(parser_result, opt.name) = "";
                     },
                     else => |n| {
                         if (opt.default) |default| {
-                            for (default) |val, i| @field(parsed_args, opt.name)[i] = val;
+                            for (default) |val, i| @field(parser_result, opt.name)[i] = val;
                         } else {
                             var i: usize = 0;
-                            while (i < n) : (i += 1) @field(parsed_args, opt.name)[i] = "";
+                            while (i < n) : (i += 1) @field(parser_result, opt.name)[i] = "";
                         }
                     },
                 },
-                .positional => |pos| @field(parsed_args, pos.name) = "",
+                .positional => |pos| @field(parser_result, pos.name) = "",
             };
+        }
+
+        fn parseArgumentSlice(arguments: [][]const u8) !ParserResult {
+            // Result struct
+            var parsed_args: ParserResult = undefined;
+            initParserResult(&parsed_args);
+
+            // Array for tracking required options
+            var pos_opt_present = [_]bool{false} ** opt_pos.len;
 
             // Parse options
             var i: usize = 0;
@@ -368,6 +370,9 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                         const starts_with_long = len(long) > 0 and startsWith(u8, arguments[i], long);
 
                         if (starts_with_short or starts_with_long) {
+                            // Check if option was already parsed
+                            if (pos_opt_present[j]) try returnErrorRepeatedOption(opt);
+                            // Parse option and option arguments
                             switch (opt.takes) {
                                 0 => {
                                     // Save argument
@@ -384,18 +389,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     // Get argument
                                     const arg = arguments[i + 1];
                                     // Save argument
-                                    if (opt.possible_values) |possible_values| {
-                                        var found_valid_value = false;
-                                        for (possible_values) |possible_value| {
-                                            if (eql(u8, arg, possible_value)) {
-                                                @field(parsed_args, opt.name) = arg;
-                                                found_valid_value = true;
-                                            }
-                                        }
-                                        if (!found_valid_value) try returnErrorInvalidOptionArgument(opt, arg);
-                                    } else {
-                                        @field(parsed_args, opt.name) = arg;
-                                    }
+                                    try validateArgument(opt, arg);
+                                    @field(parsed_args, opt.name) = arg;
                                     // Update loop counter
                                     i += 2;
                                     // Turn on flags
@@ -409,18 +404,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     const args = arguments[i + 1 .. i + 1 + n];
                                     // Save arguments
                                     for (args) |arg, k| {
-                                        if (opt.possible_values) |possible_values| {
-                                            var found_valid_value = false;
-                                            for (possible_values) |possible_value| {
-                                                if (eql(u8, arg, possible_value)) {
-                                                    @field(parsed_args, opt.name)[k] = arg;
-                                                    found_valid_value = true;
-                                                }
-                                            }
-                                            if (!found_valid_value) try returnErrorInvalidOptionArgument(opt, arg);
-                                        } else {
-                                            @field(parsed_args, opt.name)[k] = arg;
-                                        }
+                                        try validateArgument(opt, arg);
+                                        @field(parsed_args, opt.name)[k] = arg;
                                     }
                                     // Update loop counter
                                     i += n + 1;
@@ -460,6 +445,16 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             };
 
             return parsed_args;
+        }
+
+        pub fn validateArgument(comptime opt: AppOption, arg: []const u8) !void {
+            if (opt.possible_values) |possible_values| {
+                var is_valid = false;
+                for (possible_values) |possible_value| {
+                    if (eql(u8, arg, possible_value)) is_valid = true;
+                }
+                if (!is_valid) try returnErrorInvalidOptionArgument(opt, arg);
+            }
         }
 
         pub fn parseArgumentsAllocator(allocator: Allocator) !ParserResult {
@@ -557,6 +552,26 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
         fn returnErrorMissingRequiredOption(comptime opt: AppOption) !void {
             const stderr = std.io.getStdErr().writer();
             try returnErrorMissingRequiredOptionWriter(opt, stderr);
+        }
+
+        fn returnErrorRepeatedOptionWriter(comptime opt: AppOption, writer: anytype) !void {
+            const name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+
+            const str1 = red ++ "Error: " ++ reset;
+            const str2 = "Option ";
+            const str3 = green ++ name ++ reset;
+            const str4 = " appears more than one time\n";
+            const tmp1 = str1 ++ str2 ++ str3 ++ str4;
+
+            try writer.writeAll(tmp1);
+            try suggestHelpOptionWriter(writer);
+
+            return error.RepeatedOption;
+        }
+
+        fn returnErrorRepeatedOption(comptime opt: AppOption) !void {
+            const stderr = std.io.getStdErr().writer();
+            try returnErrorRepeatedOptionWriter(opt, stderr);
         }
     };
 }

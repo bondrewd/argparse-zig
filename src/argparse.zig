@@ -424,8 +424,10 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                         if (opt.possible_values) |possible_values| {
                                             var found_valid_value = false;
                                             for (possible_values) |possible_value| {
-                                                if (eql(u8, arg, possible_value)) @field(parsed_args, opt.name)[k] = arg;
-                                                found_valid_value = true;
+                                                if (eql(u8, arg, possible_value)) {
+                                                    @field(parsed_args, opt.name)[k] = arg;
+                                                    found_valid_value = true;
+                                                }
                                             }
 
                                             if (!found_valid_value) {

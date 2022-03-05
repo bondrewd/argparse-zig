@@ -59,74 +59,63 @@ pub const AppPositional = struct {
     description: []const u8,
 };
 
-pub const AppOptionPositional = union(enum) {
-    option: AppOption,
-    positional: AppPositional,
-};
-
-pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptionPositional) type {
+pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOption, positionals: []const AppPositional) type {
     // Validate opt_pos
-    inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
-        .option => |opt| {
-            if (opt.name.len == 0) @compileError("Option name can't be an empty string");
-            if (indexOf(u8, opt.name, " ") != null) @compileError("Option name can't contain blank spaces");
-            if (opt.short == null and opt.long == null) @compileError("Option short and long can't both be empty");
-            if (opt.required and opt.default != null) @compileError("Required option can't have default values");
-            switch (opt.takes) {
-                0 => {
-                    if (opt.default != null) @compileError("Option with 0 arguments can't have default values");
-                    if (opt.possible_values != null) @compileError("Option with 0 arguments can't have possible values");
-                },
-                1 => if (opt.default) |default| {
-                    if (default.len != 1) @compileError("Default value for option with 1 argument can only be a single string");
-                    if (opt.possible_values) |possible_values| {
+    inline for (options) |opt| {
+        if (opt.name.len == 0) @compileError("Option name can't be an empty string");
+        if (indexOf(u8, opt.name, " ") != null) @compileError("Option name can't contain blank spaces");
+        if (opt.short == null and opt.long == null) @compileError("Option short and long can't both be empty");
+        if (opt.required and opt.default != null) @compileError("Required option can't have default values");
+        switch (opt.takes) {
+            0 => {
+                if (opt.default != null) @compileError("Option with 0 arguments can't have default values");
+                if (opt.possible_values != null) @compileError("Option with 0 arguments can't have possible values");
+            },
+            1 => if (opt.default) |default| {
+                if (default.len != 1) @compileError("Default value for option with 1 argument can only be a single string");
+                if (opt.possible_values) |possible_values| {
+                    var found_valid_value = false;
+                    for (possible_values) |possible_value| {
+                        if (eql(u8, default[0], possible_value)) found_valid_value = true;
+                    }
+                    if (!found_valid_value) @compileError("Invalid default value for option with possible values");
+                }
+            },
+            else => |n| if (opt.default) |defaults| {
+                if (defaults.len != n) @compileError("Number of default values for option with many arguments need to the same as the number of taken arguments");
+                if (opt.possible_values) |possible_values| {
+                    for (defaults) |default| {
                         var found_valid_value = false;
                         for (possible_values) |possible_value| {
-                            if (eql(u8, default[0], possible_value)) found_valid_value = true;
+                            if (eql(u8, default, possible_value)) found_valid_value = true;
                         }
                         if (!found_valid_value) @compileError("Invalid default value for option with possible values");
                     }
-                },
-                else => |n| if (opt.default) |defaults| {
-                    if (defaults.len != n) @compileError("Number of default values for option with many arguments need to the same as the number of taken arguments");
-                    if (opt.possible_values) |possible_values| {
-                        for (defaults) |default| {
-                            var found_valid_value = false;
-                            for (possible_values) |possible_value| {
-                                if (eql(u8, default, possible_value)) found_valid_value = true;
-                            }
-                            if (!found_valid_value) @compileError("Invalid default value for option with possible values");
-                        }
-                    }
-                },
-            }
-            if (opt.possible_values) |possible_values| {
-                for (possible_values) |possible_value| {
-                    if (possible_value.len == 0) @compileError("Possible value can't be an empty string");
-                    if (indexOf(u8, possible_value, " ") != null) @compileError("Possible value can't contain blank spaces");
                 }
+            },
+        }
+        if (opt.possible_values) |possible_values| {
+            for (possible_values) |possible_value| {
+                if (possible_value.len == 0) @compileError("Possible value can't be an empty string");
+                if (indexOf(u8, possible_value, " ") != null) @compileError("Possible value can't contain blank spaces");
             }
-            if (opt.conflicts_with) |conflict_names| {
-                for (conflict_names) |conflict_name| {
-                    if (eql(u8, opt.name, conflict_name)) @compileError("Option can't conflict with itself");
-                    var conflict_exists = false;
-                    for (opt_pos) |opt_pos__| {
-                        switch (opt_pos__) {
-                            .option => |opt_| {
-                                if (eql(u8, opt_.name, conflict_name)) conflict_exists = true;
-                            },
-                            .positional => {},
-                        }
-                    }
-                    if (!conflict_exists) @compileError("Unknown conflicting option");
+        }
+        if (opt.conflicts_with) |conflict_names| {
+            for (conflict_names) |conflict_name| {
+                if (eql(u8, opt.name, conflict_name)) @compileError("Option can't conflict with itself");
+                var conflict_exists = false;
+                for (opt) |opt_| {
+                    if (eql(u8, opt_.name, conflict_name)) conflict_exists = true;
                 }
+                if (!conflict_exists) @compileError("Unknown conflicting option");
             }
-        },
-        .positional => |pos| {
-            if (pos.name.len == 0) @compileError("Positional name can't be an empty string");
-            if (indexOf(u8, pos.name, " ") != null) @compileError("Positional name can't contain blank spaces");
-        },
-    };
+        }
+    }
+
+    for (positionals) |pos| {
+        if (pos.name.len == 0) @compileError("Positional name can't be an empty string");
+        if (indexOf(u8, pos.name, " ") != null) @compileError("Positional name can't contain blank spaces");
+    }
 
     return struct {
         const help_option = AppOption{
@@ -163,10 +152,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             try writer.print("{s}", .{yellow ++ "USAGE\n" ++ reset});
             try writer.print("    {s} [OPTION]", .{info.app_name});
 
-            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
-                .positional => |p| try writer.writeAll(" " ++ p.metavar),
-                .option => {},
-            };
+            inline for (positionals) |pos| try writer.writeAll(" " ++ pos.metavar);
 
             try writer.writeByte('\n');
         }
@@ -212,15 +198,12 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 try writer.writeAll(green ++ " (conflicting options:" ++ reset);
                 for (conflict_names) |conflict_name, i| {
                     const comma = if (i == 0) " " else ", ";
-                    inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
-                        .option => |opt| {
-                            if (eql(u8, conflict_name, opt.name)) {
-                                const name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
-                                try writer.print(green ++ "{s}" ++ reset ++ blue ++ "{s}" ++ reset, .{ comma, name });
-                            }
-                        },
-                        .positional => {},
-                    };
+                    inline for (options) |opt| {
+                        if (eql(u8, conflict_name, opt.name)) {
+                            const name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
+                            try writer.print(green ++ "{s}" ++ reset ++ blue ++ "{s}" ++ reset, .{ comma, name });
+                        }
+                    }
                 }
                 try writer.writeAll(green ++ ")" ++ reset);
             }
@@ -239,33 +222,20 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
         }
 
         fn displayOptionPositionalWriter(writer: anytype) !void {
-            var n_pos: usize = 0;
-
-            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
-                .positional => n_pos += 1,
-                else => {},
-            };
-
-            if (comptime n_pos > 0) {
+            if (comptime positionals.len > 0) {
                 try writer.print("{s}", .{yellow ++ "ARGUMENTS\n" ++ reset});
-                inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
-                    .positional => |pos| {
-                        try writer.print("\n", .{});
-                        try displayPositionalWriter(pos, writer);
-                    },
-                    else => continue,
-                };
+                inline for (positionals) |pos| {
+                    try writer.print("\n", .{});
+                    try displayPositionalWriter(pos, writer);
+                }
                 try writer.print("\n", .{});
             }
 
             try writer.print("{s}", .{yellow ++ "OPTIONS\n" ++ reset});
-            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
-                .option => |opt| {
-                    try writer.print("\n", .{});
-                    try displayOptionWriter(opt, writer);
-                },
-                else => {},
-            };
+            inline for (options) |opt| {
+                try writer.print("\n", .{});
+                try displayOptionWriter(opt, writer);
+            }
 
             try writer.print("\n", .{});
             try displayOptionWriter(help_option, writer);
@@ -293,38 +263,37 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
         }
 
         fn ParserResultFromOptionPositional() type {
-            const n_fields = opt_pos.len;
+            const n_fields = options.len + positionals.len;
 
             var fields: [n_fields]StructField = undefined;
 
-            inline for (opt_pos) |opt_pos_, i| comptime switch (opt_pos_) {
-                .option => |opt| {
-                    const OptT = switch (opt.takes) {
-                        0 => bool,
-                        1 => []const u8,
-                        else => |n| [n][]const u8,
-                    };
+            inline for (options) |opt, i| {
+                const OptT = switch (opt.takes) {
+                    0 => bool,
+                    1 => []const u8,
+                    else => |n| [n][]const u8,
+                };
 
-                    fields[i] = .{
-                        .name = opt.name,
-                        .field_type = OptT,
-                        .default_value = null,
-                        .is_comptime = false,
-                        .alignment = @alignOf(OptT),
-                    };
-                },
-                .positional => |pos| {
-                    const PosT = []const u8;
+                fields[i] = .{
+                    .name = opt.name,
+                    .field_type = OptT,
+                    .default_value = null,
+                    .is_comptime = false,
+                    .alignment = @alignOf(OptT),
+                };
+            }
 
-                    fields[i] = .{
-                        .name = pos.name,
-                        .field_type = PosT,
-                        .default_value = null,
-                        .is_comptime = false,
-                        .alignment = @alignOf(PosT),
-                    };
-                },
-            };
+            inline for (positionals) |pos, i| {
+                const PosT = []const u8;
+
+                fields[i + options.len] = .{
+                    .name = pos.name,
+                    .field_type = PosT,
+                    .default_value = null,
+                    .is_comptime = false,
+                    .alignment = @alignOf(PosT),
+                };
+            }
 
             const decls: [0]Declaration = .{};
 
@@ -345,30 +314,29 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
         pub const ParserResult = ParserResultFromOptionPositional();
 
         pub fn initParserResult(parser_result: *ParserResult) void {
-            inline for (opt_pos) |opt_pos_| switch (opt_pos_) {
-                .option => |opt| switch (opt.takes) {
-                    0 => if (opt.default) |default| {
-                        if (eql(u8, default[0], "on")) @field(parser_result, opt.name) = true;
-                        if (eql(u8, default[0], "off")) @field(parser_result, opt.name) = false;
-                    } else {
-                        @field(parser_result, opt.name) = false;
-                    },
-                    1 => if (opt.default) |default| {
-                        @field(parser_result, opt.name) = default[0];
-                    } else {
-                        @field(parser_result, opt.name) = "";
-                    },
-                    else => |n| {
-                        if (opt.default) |default| {
-                            for (default) |val, i| @field(parser_result, opt.name)[i] = val;
-                        } else {
-                            var i: usize = 0;
-                            while (i < n) : (i += 1) @field(parser_result, opt.name)[i] = "";
-                        }
-                    },
+            inline for (options) |opt| switch (opt.takes) {
+                0 => if (opt.default) |default| {
+                    if (eql(u8, default[0], "on")) @field(parser_result, opt.name) = true;
+                    if (eql(u8, default[0], "off")) @field(parser_result, opt.name) = false;
+                } else {
+                    @field(parser_result, opt.name) = false;
                 },
-                .positional => |pos| @field(parser_result, pos.name) = "",
+                1 => if (opt.default) |default| {
+                    @field(parser_result, opt.name) = default[0];
+                } else {
+                    @field(parser_result, opt.name) = "";
+                },
+                else => |n| {
+                    if (opt.default) |default| {
+                        for (default) |val, i| @field(parser_result, opt.name)[i] = val;
+                    } else {
+                        var i: usize = 0;
+                        while (i < n) : (i += 1) @field(parser_result, opt.name)[i] = "";
+                    }
+                },
             };
+
+            inline for (positionals) |pos| @field(parser_result, pos.name) = "";
         }
 
         fn parseArgumentSlice(arguments: [][]const u8) !ParserResult {
@@ -377,7 +345,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
             initParserResult(&parsed_args);
 
             // Array for tracking required options
-            var opt_pos_present = [_]bool{false} ** opt_pos.len;
+            var opt_present = [_]bool{false} ** options.len;
+            var pos_present = [_]bool{false} ** positionals.len;
 
             // Parse options
             var i: usize = 0;
@@ -394,8 +363,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                     return error.FoundHelpOption;
                 }
 
-                inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
-                    .option => |opt| if (!opt_found) {
+                inline for (options) |opt, j| {
+                    if (!opt_found) {
                         const short = opt.short orelse "";
                         const long = opt.long orelse "";
 
@@ -404,7 +373,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
 
                         if (starts_with_short or starts_with_long) {
                             // Check if option was already parsed
-                            if (opt_pos_present[j]) try returnErrorRepeatedOption(opt);
+                            if (opt_present[j]) try returnErrorRepeatedOption(opt);
                             // Parse option and option arguments
                             switch (opt.takes) {
                                 0 => {
@@ -414,7 +383,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     i += 1;
                                     // Turn on flags
                                     opt_found = true;
-                                    opt_pos_present[j] = true;
+                                    opt_present[j] = true;
                                 },
                                 1 => {
                                     // Check if there are enough args
@@ -428,7 +397,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     i += 2;
                                     // Turn on flags
                                     opt_found = true;
-                                    opt_pos_present[j] = true;
+                                    opt_present[j] = true;
                                 },
                                 else => |n| {
                                     // Check if there are enough args
@@ -444,59 +413,47 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                     i += n + 1;
                                     // Turn on flags
                                     opt_found = true;
-                                    opt_pos_present[j] = true;
+                                    opt_present[j] = true;
                                 },
                             }
                             // Update parsing counter
                             current = i;
                         }
-                    },
-                    .positional => {},
-                };
+                    }
+                }
                 // Update loop counter if an option was not found
                 if (!opt_found) i += 1;
             }
 
             // Parse positionals
-            inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
-                .option => {},
-                .positional => |pos| if (current < arguments.len) {
+            inline for (positionals) |pos, j| {
+                if (current < arguments.len) {
                     // Check if there are enough args
                     if (current >= arguments.len) try returnErrorMissingPositional(pos);
 
                     // Store argument
                     @field(parsed_args, pos.name) = arguments[current];
-                    opt_pos_present[j] = true;
+                    pos_present[j] = true;
                     current += 1;
-                },
-            };
-
-            // Check if required optionals were present
-            inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
-                .option => |opt| if (opt.required and !opt_pos_present[j]) try returnErrorMissingRequiredOption(opt),
-                .positional => |pos| if (!opt_pos_present[j]) try returnErrorMissingPositional(pos),
-            };
-
-            // Check conflicting optionals
-            inline for (opt_pos) |opt_pos_, j| {
-                switch (opt_pos_) {
-                    .option => |j_opt| if (j_opt.conflicts_with) |conflict_names| {
-                        for (conflict_names) |name| {
-                            inline for (opt_pos) |opt_pos__, k| switch (opt_pos__) {
-                                .option => |k_opt| {
-                                    var t1 = eql(u8, k_opt.name, name);
-                                    var t2 = opt_pos_present[j];
-                                    var t3 = opt_pos_present[k];
-                                    var conflict = t1 and t2 and t3;
-                                    if (conflict) try returnErrorConflictingOptions(j_opt, k_opt);
-                                },
-                                .positional => {},
-                            };
-                        }
-                    },
-                    .positional => {},
                 }
             }
+
+            // Check if required optionals were present
+            inline for (options) |opt, j| if (opt.required and !opt_present[j]) try returnErrorMissingRequiredOption(opt);
+            inline for (positionals) |pos, j| if (!pos_present[j]) try returnErrorMissingPositional(pos);
+
+            // Check conflicting optionals
+            inline for (options) |j_opt, j| if (j_opt.conflicts_with) |conflict_names| {
+                for (conflict_names) |name| {
+                    inline for (options) |k_opt, k| {
+                        var t1 = eql(u8, k_opt.name, name);
+                        var t2 = opt_present[j];
+                        var t3 = opt_present[k];
+                        var conflict = t1 and t2 and t3;
+                        if (conflict) try returnErrorConflictingOptions(j_opt, k_opt);
+                    }
+                }
+            };
 
             return parsed_args;
         }
@@ -665,7 +622,7 @@ test "Argparse displayNameVersionWriter" {
         .app_name = "Foo",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     try Parser.displayNameVersionWriter(lw);
     const str = green ++ "Foo" ++ blue ++ " 1.2.3\n" ++ reset;
@@ -684,7 +641,7 @@ test "Argparse displayDescriptionWriter" {
         .app_name = "",
         .app_description = "foo",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     try Parser.displayDescriptionWriter(lw);
     const str = "foo\n";
@@ -703,21 +660,18 @@ test "Argparse displayUsageWriter with option and positional" {
         .app_name = "foo",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "bar",
-                .long = "--bar",
-                .short = "-b",
-                .description = "bar",
-            },
+            .name = "bar",
+            .long = "--bar",
+            .short = "-b",
+            .description = "bar",
         },
+    }, &.{
         .{
-            .positional = .{
-                .name = "baz",
-                .description = "baz",
-                .metavar = "BAZ",
-            },
+            .name = "baz",
+            .description = "baz",
+            .metavar = "BAZ",
         },
     });
 
@@ -738,7 +692,7 @@ test "Argparse displayUsageWriter without options nor positionals" {
         .app_name = "foo",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     try Parser.displayUsageWriter(lw);
     const str = yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
@@ -757,24 +711,20 @@ test "Argparse displayUsageWriter with only options" {
         .app_name = "foo",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "bar",
-                .long = "--bar",
-                .short = "-b",
-                .description = "bar",
-            },
+            .name = "bar",
+            .long = "--bar",
+            .short = "-b",
+            .description = "bar",
         },
         .{
-            .option = .{
-                .name = "cux",
-                .long = "--cux",
-                .short = "-c",
-                .description = "cux",
-            },
+            .name = "cux",
+            .long = "--cux",
+            .short = "-c",
+            .description = "cux",
         },
-    });
+    }, &.{});
 
     try Parser.displayUsageWriter(lw);
     const str = yellow ++ "USAGE\n" ++ reset ++ "    foo [OPTION]\n";
@@ -793,27 +743,21 @@ test "Argparse displayUsageWriter with only positionals" {
         .app_name = "foo",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{}, &.{
         .{
-            .positional = .{
-                .name = "x",
-                .metavar = "X",
-                .description = "x",
-            },
+            .name = "x",
+            .metavar = "X",
+            .description = "x",
         },
         .{
-            .positional = .{
-                .name = "y",
-                .metavar = "Y",
-                .description = "y",
-            },
+            .name = "y",
+            .metavar = "Y",
+            .description = "y",
         },
         .{
-            .positional = .{
-                .name = "z",
-                .metavar = "Z",
-                .description = "z",
-            },
+            .name = "z",
+            .metavar = "Z",
+            .description = "z",
         },
     });
 
@@ -834,7 +778,7 @@ test "Argparse displayPositionalWriter" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     const positional = .{
         .name = "foo",
@@ -859,7 +803,7 @@ test "Argparse displayOptionWriter" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     const option = .{
         .name = "",
@@ -886,7 +830,7 @@ test "Argparse displayOptionWriter with metavar" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     const option = .{
         .name = "",
@@ -914,7 +858,7 @@ test "Argparse displayOptionWriter required" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     const option = .{
         .name = "",
@@ -946,7 +890,7 @@ test "Argparse displayOptionWriter with default value" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     const option = .{
         .name = "",
@@ -980,7 +924,7 @@ test "Argparse displayOptionWriter with possible values" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{});
+    }, &.{}, &.{});
 
     const option = .{
         .name = "",
@@ -1023,23 +967,20 @@ test "Argparse displayOptionPositionalWriter" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "foo",
-                .metavar = "FOO",
-                .takes = 3,
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "foo",
+            .metavar = "FOO",
+            .takes = 3,
         },
+    }, &.{
         .{
-            .positional = .{
-                .name = "bar",
-                .metavar = "BAR",
-                .description = "bar",
-            },
+            .name = "bar",
+            .metavar = "BAR",
+            .description = "bar",
         },
     });
 
@@ -1063,37 +1004,30 @@ test "Argparse ParserResultTypeFromOptionPositional" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "foo",
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "foo",
         },
         .{
-            .option = .{
-                .name = "bar",
-                .long = "--bar",
-                .short = "-b",
-                .description = "bar",
-                .takes = 3,
-            },
+            .name = "bar",
+            .long = "--bar",
+            .short = "-b",
+            .description = "bar",
+            .takes = 3,
+        },
+    }, &.{
+        .{
+            .name = "x",
+            .metavar = "X",
+            .description = "x",
         },
         .{
-            .positional = .{
-                .name = "x",
-                .metavar = "X",
-                .description = "x",
-            },
-        },
-        .{
-            .positional = .{
-                .name = "y",
-                .metavar = "Y",
-                .description = "y",
-            },
+            .name = "y",
+            .metavar = "Y",
+            .description = "y",
         },
     });
 
@@ -1120,23 +1054,19 @@ test "Argparse parseArgumentSlice option takes 0" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "",
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "",
         },
         .{
-            .option = .{
-                .name = "bar",
-                .long = "--bar",
-                .description = "",
-            },
+            .name = "bar",
+            .long = "--bar",
+            .description = "",
         },
-    });
+    }, &.{});
 
     var args_1 = [_][]const u8{"-f"};
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
@@ -1159,25 +1089,21 @@ test "Argparse parseArgumentSlice option takes 1" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "",
-                .takes = 1,
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "",
+            .takes = 1,
         },
         .{
-            .option = .{
-                .name = "bar",
-                .long = "--bar",
-                .description = "",
-                .takes = 1,
-            },
+            .name = "bar",
+            .long = "--bar",
+            .description = "",
+            .takes = 1,
         },
-    });
+    }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "abc" };
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
@@ -1205,25 +1131,21 @@ test "Argparse parseArgumentSlice option takes n" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "",
-                .takes = 2,
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "",
+            .takes = 2,
         },
         .{
-            .option = .{
-                .name = "bar",
-                .short = "-b",
-                .description = "",
-                .takes = 3,
-            },
+            .name = "bar",
+            .short = "-b",
+            .description = "",
+            .takes = 3,
         },
-    });
+    }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "a", "b" };
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
@@ -1263,27 +1185,23 @@ test "Argparse parseArgumentSlice option with possible values" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "",
-                .takes = 1,
-                .possible_values = &.{ "a", "b", "c" },
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "",
+            .takes = 1,
+            .possible_values = &.{ "a", "b", "c" },
         },
         .{
-            .option = .{
-                .name = "bar",
-                .long = "--bar",
-                .description = "",
-                .takes = 2,
-                .possible_values = &.{ "1", "2", "3" },
-            },
+            .name = "bar",
+            .long = "--bar",
+            .description = "",
+            .takes = 2,
+            .possible_values = &.{ "1", "2", "3" },
         },
-    });
+    }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "a" };
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
@@ -1309,29 +1227,25 @@ test "Argparse parseArgumentSlice option with possible values and default value"
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "",
-                .takes = 1,
-                .possible_values = &.{ "a", "b", "c" },
-                .default = &.{"b"},
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "",
+            .takes = 1,
+            .possible_values = &.{ "a", "b", "c" },
+            .default = &.{"b"},
         },
         .{
-            .option = .{
-                .name = "bar",
-                .long = "--bar",
-                .description = "",
-                .takes = 2,
-                .possible_values = &.{ "1", "2", "3" },
-                .default = &.{ "1", "3" },
-            },
+            .name = "bar",
+            .long = "--bar",
+            .description = "",
+            .takes = 2,
+            .possible_values = &.{ "1", "2", "3" },
+            .default = &.{ "1", "3" },
         },
-    });
+    }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "a" };
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
@@ -1363,20 +1277,16 @@ test "Argparse parseArgumentSlice positional" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{}, &.{
         .{
-            .positional = .{
-                .name = "x",
-                .metavar = "X",
-                .description = "x",
-            },
+            .name = "x",
+            .metavar = "X",
+            .description = "x",
         },
         .{
-            .positional = .{
-                .name = "y",
-                .metavar = "Y",
-                .description = "y",
-            },
+            .name = "y",
+            .metavar = "Y",
+            .description = "y",
         },
     });
 
@@ -1391,36 +1301,29 @@ test "Argparse parseArgumentSlice" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .short = "-f",
-                .description = "",
-            },
+            .name = "foo",
+            .short = "-f",
+            .description = "",
         },
         .{
-            .option = .{
-                .name = "bar",
-                .short = "-b",
-                .description = "",
-                .takes = 1,
-            },
+            .name = "bar",
+            .short = "-b",
+            .description = "",
+            .takes = 1,
         },
         .{
-            .option = .{
-                .name = "baz",
-                .short = "-z",
-                .description = "",
-                .takes = 2,
-            },
+            .name = "baz",
+            .short = "-z",
+            .description = "",
+            .takes = 2,
         },
+    }, &.{
         .{
-            .positional = .{
-                .name = "cux",
-                .description = "",
-                .metavar = "CUX",
-            },
+            .name = "cux",
+            .description = "",
+            .metavar = "CUX",
         },
     });
 
@@ -1486,38 +1389,31 @@ test "Argparse parseArgumentSlice with default values" {
         .app_name = "",
         .app_description = "",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .short = "-f",
-                .description = "",
-            },
+            .name = "foo",
+            .short = "-f",
+            .description = "",
         },
         .{
-            .option = .{
-                .name = "bar",
-                .short = "-b",
-                .description = "",
-                .takes = 1,
-                .default = &.{"a"},
-            },
+            .name = "bar",
+            .short = "-b",
+            .description = "",
+            .takes = 1,
+            .default = &.{"a"},
         },
         .{
-            .option = .{
-                .name = "baz",
-                .short = "-z",
-                .description = "",
-                .takes = 2,
-                .default = &.{ "b", "c" },
-            },
+            .name = "baz",
+            .short = "-z",
+            .description = "",
+            .takes = 2,
+            .default = &.{ "b", "c" },
         },
+    }, &.{
         .{
-            .positional = .{
-                .name = "cux",
-                .description = "",
-                .metavar = "CUX",
-            },
+            .name = "cux",
+            .description = "",
+            .metavar = "CUX",
         },
     });
 
@@ -1583,17 +1479,15 @@ test "Argparse parseArgumentSlice option required" {
         .app_name = "name",
         .app_description = "description",
         .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
-    }, &[_]AppOptionPositional{
+    }, &.{
         .{
-            .option = .{
-                .name = "foo",
-                .long = "--foo",
-                .short = "-f",
-                .description = "description",
-                .required = true,
-            },
+            .name = "foo",
+            .long = "--foo",
+            .short = "-f",
+            .description = "description",
+            .required = true,
         },
-    });
+    }, &.{});
 
     var args_1 = [_][]const u8{"-f"};
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);

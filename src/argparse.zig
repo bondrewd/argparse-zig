@@ -355,7 +355,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                 if (startsWith(u8, arguments[i], "-h") or startsWith(u8, arguments[i], "--help")) {
                     const stdout = std.io.getStdOut().writer();
                     try displayHelpWriter(stdout);
-                    std.os.exit(0);
+                    return error.FoundHelpOption;
                 }
 
                 inline for (opt_pos) |opt_pos_, j| switch (opt_pos_) {
@@ -381,7 +381,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                         const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
                                         try stderr.writeAll(red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ green ++ opt_display_name ++ reset ++ "\n");
                                         try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information\n");
-                                        std.os.exit(0);
+                                        return error.MissingOptionArgument;
                                     }
 
                                     const arg = arguments[i + 1];
@@ -399,7 +399,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                             const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
                                             try stderr.print(red ++ "Error: " ++ reset ++ "Invalid argument " ++ green ++ "{s}" ++ reset ++ " for option " ++ green ++ opt_display_name ++ reset ++ "\n", .{arg});
                                             try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information\n");
-                                            std.os.exit(0);
+                                            return error.InvalidOptionArgument;
                                         }
                                     } else {
                                         @field(parsed_args, opt.name) = arg;
@@ -416,7 +416,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                         const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
                                         try stderr.writeAll(red ++ "Error: " ++ reset ++ "Missing arguments for option " ++ green ++ opt_display_name ++ reset ++ "\n");
                                         try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information\n");
-                                        std.os.exit(0);
+                                        return error.MissingOptionArgument;
                                     }
 
                                     const args = arguments[i + 1 .. i + 1 + n];
@@ -435,7 +435,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                                                 const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
                                                 try stderr.print(red ++ "Error: " ++ reset ++ "Invalid argument " ++ green ++ "{s}" ++ reset ++ " for option " ++ green ++ opt_display_name ++ reset ++ "\n", .{arg});
                                                 try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information\n");
-                                                std.os.exit(0);
+                                                return error.InvalidOptionArgument;
                                             }
                                         } else {
                                             @field(parsed_args, opt.name)[k] = arg;
@@ -466,7 +466,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                         const stderr = std.io.getStdErr().writer();
                         try stderr.writeAll(red ++ "Error: " ++ reset ++ "Missing positional " ++ green ++ pos.metavar ++ reset ++ "\n");
                         try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information\n");
-                        std.os.exit(0);
+                        return error.MissingPositionalArgument;
                     }
 
                     // Store argument
@@ -484,14 +484,14 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime opt_pos: []const AppOptio
                         const opt_display_name = if (opt.long) |l| l else if (opt.short) |s| s else opt.name;
                         try stderr.writeAll(red ++ "Error: " ++ reset ++ "Required option " ++ green ++ opt_display_name ++ reset ++ " is not present\n");
                         try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information\n");
-                        std.os.exit(0);
+                        return error.MissingRequiredOption;
                     }
                 },
                 .positional => |pos| if (!pos_opt_present[j]) {
                     const stderr = std.io.getStdErr().writer();
-                    try stderr.writeAll(red ++ "Error: " ++ reset ++ "Positional argument " ++ green ++ pos.metavar ++ reset ++ " is not present\n");
+                    try stderr.writeAll(red ++ "Error: " ++ reset ++ "Missing positional " ++ green ++ pos.metavar ++ reset ++ "\n");
                     try stderr.writeAll("Use " ++ green ++ info.app_name ++ " --help" ++ reset ++ " for more information\n");
-                    std.os.exit(0);
+                    return error.MissingPositionalArgument;
                 },
             };
 

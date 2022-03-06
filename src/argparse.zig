@@ -57,6 +57,7 @@ pub const AppPositional = struct {
     name: []const u8,
     metavar: []const u8,
     description: []const u8,
+    capture_remaining: bool = false,
 };
 
 pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOption, positionals: []const AppPositional) type {
@@ -112,9 +113,10 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
         }
     }
 
-    for (positionals) |pos| {
+    for (positionals) |pos, i| {
         if (pos.name.len == 0) @compileError("Positional name can't be an empty string");
         if (indexOf(u8, pos.name, " ") != null) @compileError("Positional name can't contain blank spaces");
+        if (pos.capture_remaining and i != positionals.len - 1) @compileError("Only the last defined positional can capture the remaining arguments");
     }
 
     return struct {
@@ -152,7 +154,11 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             try writer.print("{s}", .{yellow ++ "USAGE\n" ++ reset});
             try writer.print("    {s} [OPTION]", .{info.app_name});
 
-            inline for (positionals) |pos| try writer.writeAll(" " ++ pos.metavar);
+            if (positionals.len > 0) {
+                inline for (positionals) |pos| try writer.writeAll(" " ++ pos.metavar);
+                const last = positionals[positionals.len - 1];
+                if (last.capture_remaining) try writer.writeAll(" [" ++ last.metavar ++ "..]");
+            }
 
             try writer.writeByte('\n');
         }
@@ -284,7 +290,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             }
 
             inline for (positionals) |pos, i| {
-                const PosT = []const u8;
+                const PosT = if (pos.capture_remaining) [][]const u8 else []const u8;
 
                 fields[i + options.len] = .{
                     .name = pos.name,
@@ -336,7 +342,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                 },
             };
 
-            inline for (positionals) |pos| @field(parser_result, pos.name) = "";
+            inline for (positionals) |pos| @field(parser_result, pos.name) = if (pos.capture_remaining) &.{} else "";
         }
 
         fn parseArgumentSlice(arguments: [][]const u8) !ParserResult {
@@ -432,9 +438,15 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                     if (current >= arguments.len) try returnErrorMissingPositional(pos);
 
                     // Store argument
-                    @field(parsed_args, pos.name) = arguments[current];
-                    pos_present[j] = true;
-                    current += 1;
+                    if (pos.capture_remaining) {
+                        @field(parsed_args, pos.name) = arguments[current..];
+                        pos_present[j] = true;
+                        current += arguments.len;
+                    } else {
+                        @field(parsed_args, pos.name) = arguments[current];
+                        pos_present[j] = true;
+                        current += 1;
+                    }
                 }
             }
 
@@ -1294,6 +1306,58 @@ test "Argparse parseArgumentSlice positional" {
     var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
     try testing.expectEqualStrings(parsed_args_1.x, "1");
     try testing.expectEqualStrings(parsed_args_1.y, "2");
+}
+
+test "Argparse parseArgumentSlice last positional captures remaining" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &.{}, &.{
+        .{
+            .name = "x",
+            .metavar = "X",
+            .description = "x",
+            .capture_remaining = true,
+        },
+    });
+
+    var args_1 = [_][]const u8{ "1", "2" };
+    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    try testing.expectEqualStrings(parsed_args_1.x[0], "1");
+    try testing.expectEqualStrings(parsed_args_1.x[1], "2");
+}
+
+test "Argparse parseArgumentSlice two positional last captures remaining" {
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &.{}, &.{
+        .{
+            .name = "x",
+            .metavar = "X",
+            .description = "x",
+        },
+        .{
+            .name = "y",
+            .metavar = "Y",
+            .description = "y",
+            .capture_remaining = true,
+        },
+    });
+
+    var args_1 = [_][]const u8{ "1", "2" };
+    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    try testing.expectEqualStrings(parsed_args_1.x, "1");
+    try testing.expectEqualStrings(parsed_args_1.y[0], "2");
+
+    var args_2 = [_][]const u8{ "1", "2", "3", "4" };
+    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    try testing.expectEqualStrings(parsed_args_2.x, "1");
+    try testing.expectEqualStrings(parsed_args_2.y[0], "2");
+    try testing.expectEqualStrings(parsed_args_2.y[1], "3");
+    try testing.expectEqualStrings(parsed_args_2.y[2], "4");
 }
 
 test "Argparse parseArgumentSlice" {

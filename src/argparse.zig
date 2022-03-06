@@ -434,8 +434,8 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                         }
                     }
                 }
-                // Update loop counter if an option was not found
-                if (!opt_found) i += 1;
+                // Exit when no more options are found
+                if (!opt_found) break;
             }
 
             // Parse positionals
@@ -459,6 +459,9 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                     }
                 }
             }
+
+            // Check if there are remaining arguments to be parsed
+            if (current != arguments.len) try returnErrorUnparsedArguments();
 
             // Check if required optionals were present
             inline for (options) |opt, j| if (opt.required and !opt_present[j]) try returnErrorMissingRequiredOption(opt);
@@ -508,6 +511,22 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             const tmp1 = str1 ++ str2 ++ str3;
 
             try writer.writeAll(tmp1);
+        }
+
+        fn returnErrorUnparsedArgumentsWriter(writer: anytype) !void {
+            const str1 = red ++ "Error: " ++ reset;
+            const str2 = "Too many arguments\n";
+            const tmp1 = str1 ++ str2;
+
+            try writer.writeAll(tmp1);
+            try suggestHelpOptionWriter(writer);
+
+            return error.UnparsedArguments;
+        }
+
+        fn returnErrorUnparsedArguments() !void {
+            const stderr = std.io.getStdErr().writer();
+            try returnErrorUnparsedArgumentsWriter(stderr);
         }
 
         fn returnErrorMissingOptionArgumentWriter(comptime opt: AppOption, writer: anytype) !void {

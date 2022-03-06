@@ -156,7 +156,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             if (positionals.len > 0) {
                 inline for (positionals) |pos| try writer.writeAll(" " ++ pos.metavar);
                 const last = positionals[positionals.len - 1];
-                if (last.capture_remaining) try writer.writeAll(" [" ++ last.metavar ++ "..]");
+                if (last.capture_remaining) try writer.writeAll(" [" ++ last.metavar ++ "...]");
             }
 
             try writer.writeByte('\n');

@@ -18,7 +18,6 @@ const Allocator = std.mem.Allocator;
 const TypeInfo = std.builtin.TypeInfo;
 const EnumField = TypeInfo.EnumField;
 const StructField = TypeInfo.StructField;
-const Declaration = TypeInfo.Declaration;
 
 // Ansi format
 const reset = "\x1b[000m";
@@ -269,7 +268,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
         }
 
         fn ParserResultFromOptionPositional() type {
-            const n_fields = options.len + positionals.len;
+            const n_fields = options.len + positionals.len + 1;
 
             var fields: [n_fields]StructField = undefined;
 
@@ -301,13 +300,19 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                 };
             }
 
-            const decls: [0]Declaration = .{};
+            fields[fields.len - 1] = .{
+                .name = "__allocator",
+                .field_type = Allocator,
+                .default_value = null,
+                .is_comptime = false,
+                .alignment = @alignOf(Allocator),
+            };
 
             const parser_result_type_information = TypeInfo{
                 .Struct = .{
                     .layout = .Auto,
                     .fields = &fields,
-                    .decls = &decls,
+                    .decls = &.{},
                     .is_tuple = false,
                 },
             };
@@ -319,7 +324,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
 
         pub const ParserResult = ParserResultFromOptionPositional();
 
-        pub fn initParserResult(parser_result: *ParserResult) void {
+        pub fn initParserResult(parser_result: *ParserResult, allocator: Allocator) void {
             inline for (options) |opt| switch (opt.takes) {
                 0 => if (opt.default) |default| {
                     if (eql(u8, default[0], "on")) @field(parser_result, opt.name) = true;
@@ -343,12 +348,14 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             };
 
             inline for (positionals) |pos| @field(parser_result, pos.name) = if (pos.capture_remaining) &.{} else "";
+
+            parser_result.__allocator = allocator;
         }
 
-        fn parseArgumentSlice(arguments: [][]const u8) !ParserResult {
+        fn parseArgumentsSliceAllocator(arguments: [][]const u8, allocator: Allocator) !ParserResult {
             // Result struct
             var parsed_args: ParserResult = undefined;
-            initParserResult(&parsed_args);
+            initParserResult(&parsed_args, allocator);
 
             // Array for tracking required options
             var opt_present = [_]bool{false} ** options.len;
@@ -439,9 +446,12 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
 
                     // Store argument
                     if (pos.capture_remaining) {
-                        @field(parsed_args, pos.name) = arguments[current..];
+                        var list = ArrayList([]const u8).init(allocator);
+                        defer list.deinit();
+                        for (arguments[current..]) |arg| try list.append(arg);
+                        @field(parsed_args, pos.name) = list.toOwnedSlice();
                         pos_present[j] = true;
-                        current += arguments.len;
+                        current = arguments.len;
                     } else {
                         @field(parsed_args, pos.name) = arguments[current];
                         pos_present[j] = true;
@@ -488,7 +498,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             _ = it.skip();
             while (it.next()) |arg| try args.append(arg);
 
-            return try parseArgumentSlice(args.items);
+            return try parseArgumentsSliceAllocator(args.items, allocator);
         }
 
         fn suggestHelpOptionWriter(writer: anytype) !void {
@@ -618,6 +628,13 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
         fn returnErrorConflictingOptions(comptime opt1: AppOption, comptime opt2: AppOption) !void {
             const stderr = std.io.getStdErr().writer();
             try returnErrorConflictingOptionsWriter(opt1, opt2, stderr);
+        }
+
+        pub fn deinitArgs(args: ParserResult) void {
+            if (positionals.len == 0) return;
+            const last = positionals[positionals.len - 1];
+            const allocator = args.__allocator;
+            if (last.capture_remaining) allocator.free(@field(args, last.name));
         }
     };
 }
@@ -1046,7 +1063,7 @@ test "Argparse ParserResultTypeFromOptionPositional" {
     const ParserResult = Parser.ParserResultFromOptionPositional();
     const info = @typeInfo(ParserResult).Struct;
 
-    try testing.expect(info.fields.len == 4);
+    try testing.expect(info.fields.len == 5);
 
     try testing.expect(info.fields[0].field_type == bool);
     try testing.expectEqualStrings(info.fields[0].name, "foo");
@@ -1061,7 +1078,7 @@ test "Argparse ParserResultTypeFromOptionPositional" {
     try testing.expectEqualStrings(info.fields[3].name, "y");
 }
 
-test "Argparse parseArgumentSlice option takes 0" {
+test "Argparse parseArgumentsSliceAllocator option takes 0" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1081,22 +1098,28 @@ test "Argparse parseArgumentSlice option takes 0" {
     }, &.{});
 
     var args_1 = [_][]const u8{"-f"};
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expect(parsed_args_1.foo == true);
     try testing.expect(parsed_args_1.bar == false);
 
     var args_2 = [_][]const u8{"--foo"};
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expect(parsed_args_2.foo == true);
     try testing.expect(parsed_args_2.bar == false);
 
     var args_3 = [_][]const u8{ "-f", "--bar" };
-    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    var parsed_args_3 = try Parser.parseArgumentsSliceAllocator(args_3[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_3);
+
     try testing.expect(parsed_args_3.foo == true);
     try testing.expect(parsed_args_3.bar == true);
 }
 
-test "Argparse parseArgumentSlice option takes 1" {
+test "Argparse parseArgumentsSliceAllocator option takes 1" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1118,27 +1141,35 @@ test "Argparse parseArgumentSlice option takes 1" {
     }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "abc" };
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expectEqualStrings(parsed_args_1.foo, "abc");
     try testing.expectEqualStrings(parsed_args_1.bar, "");
 
     var args_2 = [_][]const u8{ "--foo", "lala" };
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expectEqualStrings(parsed_args_2.foo, "lala");
     try testing.expectEqualStrings(parsed_args_2.bar, "");
 
     var args_3 = [_][]const u8{ "-f", "a", "--bar", "b" };
-    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    var parsed_args_3 = try Parser.parseArgumentsSliceAllocator(args_3[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_3);
+
     try testing.expectEqualStrings(parsed_args_3.foo, "a");
     try testing.expectEqualStrings(parsed_args_3.bar, "b");
 
     var args_4 = [_][]const u8{ "-f", "--bar" };
-    var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
+    var parsed_args_4 = try Parser.parseArgumentsSliceAllocator(args_4[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_4);
+
     try testing.expectEqualStrings(parsed_args_4.foo, "--bar");
     try testing.expectEqualStrings(parsed_args_4.bar, "");
 }
 
-test "Argparse parseArgumentSlice option takes n" {
+test "Argparse parseArgumentsSliceAllocator option takes n" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1160,7 +1191,9 @@ test "Argparse parseArgumentSlice option takes n" {
     }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "a", "b" };
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expectEqualStrings(parsed_args_1.foo[0], "a");
     try testing.expectEqualStrings(parsed_args_1.foo[1], "b");
     try testing.expectEqualStrings(parsed_args_1.bar[0], "");
@@ -1168,7 +1201,9 @@ test "Argparse parseArgumentSlice option takes n" {
     try testing.expectEqualStrings(parsed_args_1.bar[2], "");
 
     var args_2 = [_][]const u8{ "--foo", "x", "y" };
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expectEqualStrings(parsed_args_2.foo[0], "x");
     try testing.expectEqualStrings(parsed_args_2.foo[1], "y");
     try testing.expectEqualStrings(parsed_args_2.bar[0], "");
@@ -1176,7 +1211,9 @@ test "Argparse parseArgumentSlice option takes n" {
     try testing.expectEqualStrings(parsed_args_2.bar[2], "");
 
     var args_3 = [_][]const u8{ "-b", "1", "2", "3" };
-    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    var parsed_args_3 = try Parser.parseArgumentsSliceAllocator(args_3[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_3);
+
     try testing.expectEqualStrings(parsed_args_3.foo[0], "");
     try testing.expectEqualStrings(parsed_args_3.foo[1], "");
     try testing.expectEqualStrings(parsed_args_3.bar[0], "1");
@@ -1184,7 +1221,9 @@ test "Argparse parseArgumentSlice option takes n" {
     try testing.expectEqualStrings(parsed_args_3.bar[2], "3");
 
     var args_4 = [_][]const u8{ "-b", "-f", "a", "b" };
-    var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
+    var parsed_args_4 = try Parser.parseArgumentsSliceAllocator(args_4[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_4);
+
     try testing.expectEqualStrings(parsed_args_4.foo[0], "");
     try testing.expectEqualStrings(parsed_args_4.foo[1], "");
     try testing.expectEqualStrings(parsed_args_4.bar[0], "-f");
@@ -1192,7 +1231,7 @@ test "Argparse parseArgumentSlice option takes n" {
     try testing.expectEqualStrings(parsed_args_4.bar[2], "b");
 }
 
-test "Argparse parseArgumentSlice option with possible values" {
+test "Argparse parseArgumentsSliceAllocator option with possible values" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1216,25 +1255,31 @@ test "Argparse parseArgumentSlice option with possible values" {
     }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "a" };
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expectEqualStrings(parsed_args_1.foo, "a");
     try testing.expectEqualStrings(parsed_args_1.bar[0], "");
     try testing.expectEqualStrings(parsed_args_1.bar[1], "");
 
     var args_2 = [_][]const u8{ "--foo", "b" };
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expectEqualStrings(parsed_args_2.foo, "b");
     try testing.expectEqualStrings(parsed_args_2.bar[0], "");
     try testing.expectEqualStrings(parsed_args_2.bar[1], "");
 
     var args_3 = [_][]const u8{ "-f", "a", "--bar", "1", "2" };
-    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    var parsed_args_3 = try Parser.parseArgumentsSliceAllocator(args_3[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_3);
+
     try testing.expectEqualStrings(parsed_args_3.foo, "a");
     try testing.expectEqualStrings(parsed_args_3.bar[0], "1");
     try testing.expectEqualStrings(parsed_args_3.bar[1], "2");
 }
 
-test "Argparse parseArgumentSlice option with possible values and default value" {
+test "Argparse parseArgumentsSliceAllocator option with possible values and default value" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1260,31 +1305,39 @@ test "Argparse parseArgumentSlice option with possible values and default value"
     }, &.{});
 
     var args_1 = [_][]const u8{ "-f", "a" };
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expectEqualStrings(parsed_args_1.foo, "a");
     try testing.expectEqualStrings(parsed_args_1.bar[0], "1");
     try testing.expectEqualStrings(parsed_args_1.bar[1], "3");
 
     var args_2 = [_][]const u8{ "--foo", "b" };
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expectEqualStrings(parsed_args_2.foo, "b");
     try testing.expectEqualStrings(parsed_args_2.bar[0], "1");
     try testing.expectEqualStrings(parsed_args_2.bar[1], "3");
 
     var args_3 = [_][]const u8{ "-f", "a", "--bar", "1", "2" };
-    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    var parsed_args_3 = try Parser.parseArgumentsSliceAllocator(args_3[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_3);
+
     try testing.expectEqualStrings(parsed_args_3.foo, "a");
     try testing.expectEqualStrings(parsed_args_3.bar[0], "1");
     try testing.expectEqualStrings(parsed_args_3.bar[1], "2");
 
     var args_4 = [_][]const u8{};
-    var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
+    var parsed_args_4 = try Parser.parseArgumentsSliceAllocator(args_4[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_4);
+
     try testing.expectEqualStrings(parsed_args_4.foo, "b");
     try testing.expectEqualStrings(parsed_args_4.bar[0], "1");
     try testing.expectEqualStrings(parsed_args_4.bar[1], "3");
 }
 
-test "Argparse parseArgumentSlice positional" {
+test "Argparse parseArgumentsSliceAllocator positional" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1303,12 +1356,14 @@ test "Argparse parseArgumentSlice positional" {
     });
 
     var args_1 = [_][]const u8{ "1", "2" };
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expectEqualStrings(parsed_args_1.x, "1");
     try testing.expectEqualStrings(parsed_args_1.y, "2");
 }
 
-test "Argparse parseArgumentSlice last positional captures remaining" {
+test "Argparse parseArgumentsSliceAllocator last positional captures remaining" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1323,12 +1378,14 @@ test "Argparse parseArgumentSlice last positional captures remaining" {
     });
 
     var args_1 = [_][]const u8{ "1", "2" };
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expectEqualStrings(parsed_args_1.x[0], "1");
     try testing.expectEqualStrings(parsed_args_1.x[1], "2");
 }
 
-test "Argparse parseArgumentSlice two positional last captures remaining" {
+test "Argparse parseArgumentsSliceAllocator two positional last captures remaining" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1348,19 +1405,25 @@ test "Argparse parseArgumentSlice two positional last captures remaining" {
     });
 
     var args_1 = [_][]const u8{ "1", "2" };
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expectEqualStrings(parsed_args_1.x, "1");
     try testing.expectEqualStrings(parsed_args_1.y[0], "2");
+    try testing.expect(parsed_args_1.y.len == 1);
 
     var args_2 = [_][]const u8{ "1", "2", "3", "4" };
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expectEqualStrings(parsed_args_2.x, "1");
     try testing.expectEqualStrings(parsed_args_2.y[0], "2");
     try testing.expectEqualStrings(parsed_args_2.y[1], "3");
     try testing.expectEqualStrings(parsed_args_2.y[2], "4");
+    try testing.expect(parsed_args_2.y.len == 3);
 }
 
-test "Argparse parseArgumentSlice" {
+test "Argparse parseArgumentsSliceAllocator" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1392,7 +1455,9 @@ test "Argparse parseArgumentSlice" {
     });
 
     var args_1 = [_][]const u8{"a"};
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expect(parsed_args_1.foo == false);
     try testing.expectEqualStrings(parsed_args_1.bar, "");
     try testing.expectEqualStrings(parsed_args_1.baz[0], "");
@@ -1400,7 +1465,9 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_1.cux, "a");
 
     var args_2 = [_][]const u8{ "-f", "a" };
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expect(parsed_args_2.foo == true);
     try testing.expectEqualStrings(parsed_args_2.bar, "");
     try testing.expectEqualStrings(parsed_args_2.baz[0], "");
@@ -1408,7 +1475,9 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_2.cux, "a");
 
     var args_3 = [_][]const u8{ "-b", "a", "b" };
-    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    var parsed_args_3 = try Parser.parseArgumentsSliceAllocator(args_3[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_3);
+
     try testing.expect(parsed_args_3.foo == false);
     try testing.expectEqualStrings(parsed_args_3.bar, "a");
     try testing.expectEqualStrings(parsed_args_3.baz[0], "");
@@ -1416,7 +1485,9 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_3.cux, "b");
 
     var args_4 = [_][]const u8{ "-z", "a", "b", "c" };
-    var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
+    var parsed_args_4 = try Parser.parseArgumentsSliceAllocator(args_4[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_4);
+
     try testing.expect(parsed_args_4.foo == false);
     try testing.expectEqualStrings(parsed_args_4.bar, "");
     try testing.expectEqualStrings(parsed_args_4.baz[0], "a");
@@ -1424,7 +1495,9 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_4.cux, "c");
 
     var args_5 = [_][]const u8{ "-f", "-b", "a", "-z", "b", "c", "d" };
-    var parsed_args_5 = try Parser.parseArgumentSlice(args_5[0..]);
+    var parsed_args_5 = try Parser.parseArgumentsSliceAllocator(args_5[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_5);
+
     try testing.expect(parsed_args_5.foo == true);
     try testing.expectEqualStrings(parsed_args_5.bar, "a");
     try testing.expectEqualStrings(parsed_args_5.baz[0], "b");
@@ -1432,7 +1505,9 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_5.cux, "d");
 
     var args_6 = [_][]const u8{ "-b", "a", "-f", "-z", "b", "c", "d" };
-    var parsed_args_6 = try Parser.parseArgumentSlice(args_6[0..]);
+    var parsed_args_6 = try Parser.parseArgumentsSliceAllocator(args_6[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_6);
+
     try testing.expect(parsed_args_6.foo == true);
     try testing.expectEqualStrings(parsed_args_6.bar, "a");
     try testing.expectEqualStrings(parsed_args_6.baz[0], "b");
@@ -1440,7 +1515,9 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_6.cux, "d");
 
     var args_7 = [_][]const u8{ "-z", "b", "c", "-b", "a", "-f", "d" };
-    var parsed_args_7 = try Parser.parseArgumentSlice(args_7[0..]);
+    var parsed_args_7 = try Parser.parseArgumentsSliceAllocator(args_7[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_7);
+
     try testing.expect(parsed_args_7.foo == true);
     try testing.expectEqualStrings(parsed_args_7.bar, "a");
     try testing.expectEqualStrings(parsed_args_7.baz[0], "b");
@@ -1448,7 +1525,7 @@ test "Argparse parseArgumentSlice" {
     try testing.expectEqualStrings(parsed_args_7.cux, "d");
 }
 
-test "Argparse parseArgumentSlice with default values" {
+test "Argparse parseArgumentsSliceAllocator with default values" {
     const Parser = ArgumentParser(.{
         .app_name = "",
         .app_description = "",
@@ -1482,7 +1559,9 @@ test "Argparse parseArgumentSlice with default values" {
     });
 
     var args_1 = [_][]const u8{"alpha"};
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expect(parsed_args_1.foo == false);
     try testing.expectEqualStrings(parsed_args_1.bar, "a");
     try testing.expectEqualStrings(parsed_args_1.baz[0], "b");
@@ -1490,7 +1569,9 @@ test "Argparse parseArgumentSlice with default values" {
     try testing.expectEqualStrings(parsed_args_1.cux, "alpha");
 
     var args_2 = [_][]const u8{ "-f", "alpha" };
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expect(parsed_args_2.foo == true);
     try testing.expectEqualStrings(parsed_args_2.bar, "a");
     try testing.expectEqualStrings(parsed_args_2.baz[0], "b");
@@ -1498,7 +1579,9 @@ test "Argparse parseArgumentSlice with default values" {
     try testing.expectEqualStrings(parsed_args_2.cux, "alpha");
 
     var args_3 = [_][]const u8{ "-b", "x", "alpha" };
-    var parsed_args_3 = try Parser.parseArgumentSlice(args_3[0..]);
+    var parsed_args_3 = try Parser.parseArgumentsSliceAllocator(args_3[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_3);
+
     try testing.expect(parsed_args_3.foo == false);
     try testing.expectEqualStrings(parsed_args_3.bar, "x");
     try testing.expectEqualStrings(parsed_args_3.baz[0], "b");
@@ -1506,7 +1589,9 @@ test "Argparse parseArgumentSlice with default values" {
     try testing.expectEqualStrings(parsed_args_3.cux, "alpha");
 
     var args_4 = [_][]const u8{ "-z", "x", "y", "alpha" };
-    var parsed_args_4 = try Parser.parseArgumentSlice(args_4[0..]);
+    var parsed_args_4 = try Parser.parseArgumentsSliceAllocator(args_4[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_4);
+
     try testing.expect(parsed_args_4.foo == false);
     try testing.expectEqualStrings(parsed_args_4.bar, "a");
     try testing.expectEqualStrings(parsed_args_4.baz[0], "x");
@@ -1514,7 +1599,9 @@ test "Argparse parseArgumentSlice with default values" {
     try testing.expectEqualStrings(parsed_args_4.cux, "alpha");
 
     var args_5 = [_][]const u8{ "-f", "-b", "x", "-z", "y", "z", "alpha" };
-    var parsed_args_5 = try Parser.parseArgumentSlice(args_5[0..]);
+    var parsed_args_5 = try Parser.parseArgumentsSliceAllocator(args_5[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_5);
+
     try testing.expect(parsed_args_5.foo == true);
     try testing.expectEqualStrings(parsed_args_5.bar, "x");
     try testing.expectEqualStrings(parsed_args_5.baz[0], "y");
@@ -1522,7 +1609,9 @@ test "Argparse parseArgumentSlice with default values" {
     try testing.expectEqualStrings(parsed_args_5.cux, "alpha");
 
     var args_6 = [_][]const u8{ "-b", "x", "-f", "-z", "y", "z", "alpha" };
-    var parsed_args_6 = try Parser.parseArgumentSlice(args_6[0..]);
+    var parsed_args_6 = try Parser.parseArgumentsSliceAllocator(args_6[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_6);
+
     try testing.expect(parsed_args_6.foo == true);
     try testing.expectEqualStrings(parsed_args_6.bar, "x");
     try testing.expectEqualStrings(parsed_args_6.baz[0], "y");
@@ -1530,7 +1619,9 @@ test "Argparse parseArgumentSlice with default values" {
     try testing.expectEqualStrings(parsed_args_6.cux, "alpha");
 
     var args_7 = [_][]const u8{ "-z", "x", "y", "-b", "z", "-f", "alpha" };
-    var parsed_args_7 = try Parser.parseArgumentSlice(args_7[0..]);
+    var parsed_args_7 = try Parser.parseArgumentsSliceAllocator(args_7[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_7);
+
     try testing.expect(parsed_args_7.foo == true);
     try testing.expectEqualStrings(parsed_args_7.bar, "z");
     try testing.expectEqualStrings(parsed_args_7.baz[0], "x");
@@ -1538,7 +1629,7 @@ test "Argparse parseArgumentSlice with default values" {
     try testing.expectEqualStrings(parsed_args_7.cux, "alpha");
 }
 
-test "Argparse parseArgumentSlice option required" {
+test "Argparse parseArgumentsSliceAllocator option required" {
     const Parser = ArgumentParser(.{
         .app_name = "name",
         .app_description = "description",
@@ -1554,10 +1645,14 @@ test "Argparse parseArgumentSlice option required" {
     }, &.{});
 
     var args_1 = [_][]const u8{"-f"};
-    var parsed_args_1 = try Parser.parseArgumentSlice(args_1[0..]);
+    var parsed_args_1 = try Parser.parseArgumentsSliceAllocator(args_1[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_1);
+
     try testing.expect(parsed_args_1.foo == true);
 
     var args_2 = [_][]const u8{"--foo"};
-    var parsed_args_2 = try Parser.parseArgumentSlice(args_2[0..]);
+    var parsed_args_2 = try Parser.parseArgumentsSliceAllocator(args_2[0..], testing.allocator);
+    defer Parser.deinitArgs(parsed_args_2);
+
     try testing.expect(parsed_args_2.foo == true);
 }

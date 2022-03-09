@@ -1,15 +1,9 @@
-// Libraries
-const std = @import("std");
-
 // Modules
+const std = @import("std");
 const io = std.io;
 const fmt = std.fmt;
-const eql = std.mem.eql;
-const len = std.mem.len;
-const copy = std.mem.copy;
+const mem = std.mem;
 const testing = std.testing;
-const indexOf = std.mem.indexOf;
-const startsWith = std.mem.startsWith;
 
 // Types
 const File = std.fs.File;
@@ -18,6 +12,14 @@ const Allocator = std.mem.Allocator;
 const TypeInfo = std.builtin.TypeInfo;
 const EnumField = TypeInfo.EnumField;
 const StructField = TypeInfo.StructField;
+
+// Functions
+const eql = mem.eql;
+const len = mem.len;
+const copy = mem.copy;
+const split = mem.split;
+const indexOf = mem.indexOf;
+const startsWith = mem.startsWith;
 
 // Ansi format
 const reset = "\x1b[000m";
@@ -176,7 +178,6 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                 1 => " <" ++ option.metavar ++ ">",
                 else => " <" ++ option.metavar ++ "...>",
             };
-            const description = option.description;
 
             try writer.print("    {s}", .{green ++ short ++ sep ++ long ++ metavar ++ reset});
 
@@ -215,15 +216,19 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
 
             try writer.writeAll("\n");
 
-            try writer.print("        {s}\n", .{description});
+            const description = option.description;
+            var lines = split(u8, description, "\n");
+            while (lines.next()) |line| try writer.print("        {s}\n", .{line});
         }
 
         fn displayPositionalWriter(comptime positional: AppPositional, writer: anytype) !void {
             const metavar = positional.metavar;
-            const description = positional.description;
 
             try writer.print("    {s}\n", .{green ++ metavar ++ reset});
-            try writer.print("        {s}\n", .{description});
+
+            const description = positional.description;
+            var lines = split(u8, description, "\n");
+            while (lines.next()) |line| try writer.print("        {s}\n", .{line});
         }
 
         fn displayOptionPositionalWriter(writer: anytype) !void {
@@ -839,6 +844,39 @@ test "Argparse displayPositionalWriter" {
     try testing.expectEqualStrings(list.items, str);
 }
 
+test "Argparse displayPositionalWriter with multiline description" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &.{}, &.{});
+
+    const positional = .{
+        .name = "foo",
+        .metavar = "FOO",
+        .description = 
+        \\line1 description
+        \\line2 description
+        \\line3 description
+        ,
+    };
+
+    try Parser.displayPositionalWriter(positional, lw);
+    const str1 = "    " ++ green ++ "FOO" ++ reset ++ "\n";
+    const str2 = "        line1 description\n";
+    const str3 = "        line2 description\n";
+    const str4 = "        line3 description\n";
+    const tmp1 = str1 ++ str2 ++ str3 ++ str4;
+    try testing.expectEqualStrings(list.items, tmp1);
+}
+
 test "Argparse displayOptionWriter" {
     // Initialize array list
     var list = std.ArrayList(u8).init(testing.allocator);
@@ -864,6 +902,41 @@ test "Argparse displayOptionWriter" {
     try Parser.displayOptionWriter(option, lw);
     const str = "    " ++ green ++ "-f, --foo <ARG...>" ++ reset ++ "\n        bar\n";
     try testing.expectEqualStrings(list.items, str);
+}
+
+test "Argparse displayOptionWriter with multiline description" {
+    // Initialize array list
+    var list = std.ArrayList(u8).init(testing.allocator);
+    defer list.deinit();
+
+    // Get writer
+    const lw = list.writer();
+
+    const Parser = ArgumentParser(.{
+        .app_name = "",
+        .app_description = "",
+        .app_version = .{ .major = 1, .minor = 2, .patch = 3 },
+    }, &.{}, &.{});
+
+    const option = .{
+        .name = "",
+        .long = "--foo",
+        .short = "-f",
+        .description = 
+        \\line1 description
+        \\line2 description
+        \\line3 description
+        ,
+        .takes = 2,
+    };
+
+    try Parser.displayOptionWriter(option, lw);
+    const str1 = "    " ++ green ++ "-f, --foo <ARG...>" ++ reset ++ "\n";
+    const str2 = "        line1 description\n";
+    const str3 = "        line2 description\n";
+    const str4 = "        line3 description\n";
+    const tmp1 = str1 ++ str2 ++ str3 ++ str4;
+    try testing.expectEqualStrings(list.items, tmp1);
 }
 
 test "Argparse displayOptionWriter with metavar" {

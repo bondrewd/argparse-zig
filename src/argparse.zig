@@ -576,7 +576,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
 
         fn returnErrorMissingPositionalWriter(comptime pos: AppPositional, writer: anytype) !void {
             const str1 = red ++ "Error: " ++ reset;
-            const str2 = "Missing positional ";
+            const str2 = "Missing argument ";
             const str3 = green ++ pos.metavar ++ reset ++ "\n";
             const tmp1 = str1 ++ str2 ++ str3;
 

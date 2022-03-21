@@ -509,13 +509,18 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             return try parseArgumentsSliceAllocator(args.items, allocator);
         }
 
-        fn suggestHelpOptionWriter(writer: anytype) !void {
+        pub fn suggestHelpOptionWriter(writer: anytype) !void {
             const str1 = "Use ";
             const str2 = green ++ info.app_name ++ " --help" ++ reset;
             const str3 = " for more information\n";
             const tmp1 = str1 ++ str2 ++ str3;
 
             try writer.writeAll(tmp1);
+        }
+
+        pub fn suggestHelpOption() !void {
+            const stderr = std.io.getStdErr().writer();
+            try suggestHelpOptionWriter(stderr);
         }
 
         fn returnErrorUnparsedArgumentsWriter(writer: anytype) !void {

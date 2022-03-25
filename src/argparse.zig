@@ -409,7 +409,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                                     // Get argument
                                     const arg = arguments[i + 1];
                                     // Save argument
-                                    try validateArgument(opt, arg);
+                                    if (!isValidArgument(opt.possible_values, arg)) try returnErrorInvalidOptionArgument(opt, arg);
                                     @field(parsed_args, opt.name) = arg;
                                     // Update loop counter
                                     i += 2;
@@ -424,7 +424,7 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
                                     const args = arguments[i + 1 .. i + 1 + n];
                                     // Save arguments
                                     for (args) |arg, k| {
-                                        try validateArgument(opt, arg);
+                                        if (!isValidArgument(opt.possible_values, arg)) try returnErrorInvalidOptionArgument(opt, arg);
                                         @field(parsed_args, opt.name)[k] = arg;
                                     }
                                     // Update loop counter
@@ -488,14 +488,10 @@ pub fn ArgumentParser(comptime info: AppInfo, comptime options: []const AppOptio
             return parsed_args;
         }
 
-        pub fn validateArgument(comptime opt: AppOption, arg: []const u8) !void {
-            if (opt.possible_values) |possible_values| {
-                var is_valid = false;
-                for (possible_values) |possible_value| {
-                    if (eql(u8, arg, possible_value)) is_valid = true;
-                }
-                if (!is_valid) try returnErrorInvalidOptionArgument(opt, arg);
-            }
+        pub fn isValidArgument(possible_values: ?[]const []const u8, arg: []const u8) bool {
+            if (possible_values == null) return true;
+            for (possible_values.?) |possible_value| if (eql(u8, arg, possible_value)) return true;
+            return false;
         }
 
         pub fn parseArgumentsAllocator(allocator: Allocator) !ParserResult {
